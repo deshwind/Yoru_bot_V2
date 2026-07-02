@@ -11,17 +11,22 @@ Everything is managed from a **password-protected web dashboard** served by
 the laptop — first-run password setup, keyboard mapping drive, marking
 camera spots on the map, live CCTV/robot views, incident history.
 
-## Quick start — simulation (two terminals)
+## Quick start — simulation (one command)
 
 ```bash
-# Terminal 1: the simulated robot (Gazebo two-room world + SLAM/Nav2 + RViz)
 ./start_sim.sh
-
-# Terminal 2: the server (CCTV perception + FSM + dashboard)
-./start_server.sh sim
 ```
 
-The dashboard opens at http://localhost:8080.
+That starts everything: Gazebo (two-room world) + SLAM/Nav2 + RViz + CCTV
+smoking detection + PA voice + escalation FSM + the admin dashboard, which
+opens at http://localhost:8080.
+
+Prefer the two-terminal split that mirrors the real deployment?
+
+```bash
+./start_sim.sh robot     # Terminal 1: robot side only
+./start_server.sh sim    # Terminal 2: server side
+```
 
 **First run** (no saved map yet — the sim boots in *mapping* mode):
 
@@ -101,7 +106,8 @@ sender/recipient are in `src/yoru_bringup/config/yoru_real.yaml`.
 
 | Launch | Runs on | Started by |
 |---|---|---|
-| `sim.launch.py` | laptop (Terminal 1) | `./start_sim.sh` |
+| `sim_full.launch.py` | laptop | `./start_sim.sh` (one command: sim + server) |
+| `sim.launch.py` | laptop | `./start_sim.sh robot` (robot side only) |
 | `real_robot.launch.py` | Raspberry Pi | `./start_robot.sh` |
 | `server.launch.py` | laptop | `./start_server.sh [sim]` |
 
