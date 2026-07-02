@@ -94,6 +94,26 @@ Put your Gmail **app password** in `secrets.env`
 (Google Account → Security → App passwords). `start_server.sh` sources it;
 sender/recipient are in `src/yoru_bringup/config/yoru_real.yaml`.
 
+## Real smoking detection (two models per frame)
+
+On real hardware the YOLO node runs **two models on every CCTV frame** and
+merges the detections:
+
+- `model_path: yolov8n.pt` — persons (stock COCO model, auto-downloads)
+- `extra_model_path: cigarette_yolov8.pt` — the trained single-class
+  cigarette detector (keep a copy at the workspace root; weights are
+  git-ignored)
+
+The confirmation node then requires the cigarette near the person's mouth
+region for several consecutive frames (criteria C1–C7) before anything is
+announced. Green boxes in the dashboard camera view are persons, red boxes
+are cigarettes. In simulation the scenario publisher injects the cigarette
+instead, so the sim config runs only the stock model.
+
+When the full 6-class model is trained (`src/yoru_core/training/`), set
+`model_path` to it, `use_coco_class_map: false`, and clear
+`extra_model_path`.
+
 ## Packages
 
 | Package | Contents |

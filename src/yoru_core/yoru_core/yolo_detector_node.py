@@ -1,12 +1,19 @@
-"""YOLO detector node (dissertation Section 4.2).
+"""YOLO detector node (Yoru V2).
 
 Detects objects from one of four camera sources (ROS topic / USB / RTSP /
 video file) and publishes vision_msgs/Detection2DArray in pixel coordinates.
 
-With the stock COCO model only 'person' (and confounders such as
-'cell phone') are available; the custom six-class model
-(person, cigarette, vape_device, smoke_vapour, hand_mouth_gesture, hand_face)
-is dropped in via the 'model_path' parameter once trained.
+Supports TWO models per frame, merged into one detection array:
+  model_path       : main model - stock yolov8n gives 'person' (plus
+                     confounders like 'cell phone') via the COCO class map
+  extra_model_path : optional specialist model whose class names are used
+                     as-is - e.g. a single-class 'cigarette' detector.
+                     Both run on the same frame so the event confirmation
+                     node sees person + cigarette together.
+
+The custom six-class model (person, cigarette, vape_device, smoke_vapour,
+hand_mouth_gesture, hand_face) can replace both via 'model_path' +
+use_coco_class_map: false once trained.
 """
 
 import json
@@ -44,6 +51,9 @@ class YoloDetectorNode(Node):
         self.declare_parameter('video_path', '')
         self.declare_parameter('model_path', 'yolov8n.pt')
         self.declare_parameter('confidence_threshold', 0.4)
+        # Optional second model on the same frame (classes used as-is)
+        self.declare_parameter('extra_model_path', '')
+        self.declare_parameter('extra_confidence_threshold', 0.35)
         self.declare_parameter('input_size', 640)
         self.declare_parameter('process_hz', 5.0)
         self.declare_parameter('publish_debug_image', True)
@@ -95,6 +105,20 @@ class YoloDetectorNode(Node):
                 'Node stays alive but publishes no detections.')
             self.model = None
 
+        self.extra_model = None
+        extra_path = self.get_parameter('extra_model_path').value
+        if extra_path:
+            try:
+                from ultralytics import YOLO
+                self.extra_model = YOLO(extra_path)
+                self.get_logger().info(
+                    f'Extra model loaded: {extra_path} '
+                    f'(classes: {list(self.extra_model.names.values())})')
+            except Exception as exc:  # noqa: BLE001 - main model still runs
+                self.get_logger().error(
+                    f'Could not load extra model "{extra_path}": {exc}. '
+                    'Continuing with the main model only.')
+
     def _open_capture(self):
         if self.source_type == 'usb':
             src = int(self.get_parameter('device_index').value)
@@ -129,9 +153,6 @@ class YoloDetectorNode(Node):
                 return
             header = None
 
-        results = self.model.predict(
-            frame, imgsz=self.input_size, conf=self.conf_threshold, verbose=False)
-
         array = Detection2DArray()
         if header is not None:
             array.header = header
@@ -139,11 +160,40 @@ class YoloDetectorNode(Node):
             array.header.stamp = self.get_clock().now().to_msg()
             array.header.frame_id = 'camera'
 
-        names = results[0].names
         alert_classes = []
+        # Main model (COCO map filters it to the project vocabulary)
+        self._detect(self.model, frame, self.conf_threshold,
+                     self.use_coco_map, array, alert_classes, (0, 200, 0))
+        # Specialist model, e.g. the cigarette detector (classes as-is)
+        if self.extra_model is not None:
+            extra_conf = self.get_parameter('extra_confidence_threshold').value
+            self._detect(self.extra_model, frame, extra_conf,
+                         False, array, alert_classes, (0, 0, 230))
+
+        self.det_pub.publish(array)
+
+        if alert_classes:
+            alert = String()
+            alert.data = json.dumps({
+                'stamp': float(self.get_clock().now().nanoseconds) * 1e-9,
+                'classes': alert_classes,
+            })
+            self.alert_pub.publish(alert)
+
+        if self.debug_pub is not None:
+            self.debug_pub.publish(self.bridge.cv2_to_imgmsg(frame, 'bgr8'))
+
+    def _detect(self, model, frame, conf, use_coco_map, array, alert_classes,
+                color):
+        """Runs one model on the frame, appending detections to the shared
+        array (and boxes to the debug frame) so both models' results arrive
+        in a single message for the confirmation node."""
+        results = model.predict(
+            frame, imgsz=self.input_size, conf=conf, verbose=False)
+        names = results[0].names
         for box in results[0].boxes:
             raw_name = names[int(box.cls[0])]
-            if self.use_coco_map:
+            if use_coco_map:
                 class_id = COCO_CLASS_MAP.get(raw_name)
                 if class_id is None:
                     continue
@@ -166,23 +216,11 @@ class YoloDetectorNode(Node):
                 alert_classes.append(class_id)
 
             if self.debug_pub is not None:
-                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 200, 0), 2)
+                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)),
+                              color, 2)
                 cv2.putText(frame, f'{class_id} {float(box.conf[0]):.2f}',
                             (int(x1), max(int(y1) - 5, 12)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 0), 1)
-
-        self.det_pub.publish(array)
-
-        if alert_classes:
-            alert = String()
-            alert.data = json.dumps({
-                'stamp': float(self.get_clock().now().nanoseconds) * 1e-9,
-                'classes': alert_classes,
-            })
-            self.alert_pub.publish(alert)
-
-        if self.debug_pub is not None:
-            self.debug_pub.publish(self.bridge.cv2_to_imgmsg(frame, 'bgr8'))
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
 
 def main(args=None):
