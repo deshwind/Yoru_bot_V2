@@ -1,0 +1,25 @@
+# colcon build outputs
+build/
+install/
+log/
+
+# runtime data - never commit
+# data/ holds the admin password hash; secrets.env the Gmail app password
+data/
+secrets.env
+
+# YOLO weights (auto-downloaded by ultralytics)
+*.pt
+
+__pycache__/
+*.pyc
+
+# saved maps are personal to each deployment (commit them if you want
+# to keep a map in the repo - by default they stay local)
+maps/*.pgm
+maps/*.yaml
+maps/*.data
+maps/*.posegraph
+
+# logs / evidence
+compliance_robot_logs/

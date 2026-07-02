@@ -1,0 +1,190 @@
+# Yoru V2 simulation parameters - TWO-ROOM world, one CCTV pipeline per room.
+#
+#   cctv1 (room_a, east):  smoking person (scenario publisher injects device)
+#   cctv2 (room_b, west):  walking person (must never escalate)
+#
+# V2 workflow: first run boots in mapping mode -> drive from the dashboard
+# Setup screen, Save Map, mark camera spots (cctv1/cctv2) -> relaunch.
+# The robot then answers smoking alerts by driving to the marked spot.
+
+# ---------------- Room A pipeline (cctv1) ----------------
+yolo_cctv1:
+  ros__parameters:
+    source_type: ros_topic
+    ros_topic: /cctv1/image_raw
+    model_path: /home/desh/Yoru_bot_V2/yolov8n.pt
+    use_coco_class_map: true
+    confidence_threshold: 0.4
+    input_size: 640
+    process_hz: 5.0
+    publish_debug_image: true
+    detections_topic: /compliance/cctv1/detections_yolo   # scenario merges these
+    debug_image_topic: /compliance/cctv1/debug_image
+
+scenario_publisher_node:
+  ros__parameters:
+    mode: auto                      # augment real YOLO persons, else synthetic
+    scenario_type: smoking          # smoking | vaping | false_positive | target_loss
+    start_delay: 30.0
+    publish_hz: 10.0
+    yolo_topic: /compliance/cctv1/detections_yolo
+    output_topic: /compliance/cctv1/detections
+    image_width: 640
+    image_height: 480
+    person_pixel_x: 320.0
+    person_pixel_y: 240.0
+    person_bbox_w: 60.0
+    person_bbox_h: 150.0
+    camera_frame: cctv1_link_optical
+    comply_after_stage: DIRECT_WARNING
+    comply_delay: 6.0
+
+tracking_cctv1:
+  ros__parameters:
+    iou_threshold: 0.3
+    max_missed_frames: 15
+    min_hits: 1
+    input_topic: /compliance/cctv1/detections
+    output_topic: /compliance/cctv1/tracked
+    track_id_prefix: c1_
+
+confirm_cctv1:
+  ros__parameters:
+    person_confidence: 0.7
+    device_confidence: 0.6
+    proximity_iou: 0.05
+    persistence_frames: 5
+    confirm_confidence: 0.6
+    uncertain_confidence: 0.4
+    input_topic: /compliance/cctv1/tracked
+    output_topic: /compliance/cctv1/confirmed
+    room_id: room_a
+
+# V2: confirmed events resolve to the camera spot marked in the dashboard
+camera_target_cctv1:
+  ros__parameters:
+    camera_id: cctv1
+    cameras_file: /home/desh/Yoru_bot_V2/maps/cameras.json
+    input_topic: /compliance/cctv1/confirmed
+
+# ---------------- Room B pipeline (cctv2) ----------------
+yolo_cctv2:
+  ros__parameters:
+    source_type: ros_topic
+    ros_topic: /cctv2/image_raw
+    model_path: /home/desh/Yoru_bot_V2/yolov8n.pt
+    use_coco_class_map: true
+    confidence_threshold: 0.4
+    input_size: 640
+    process_hz: 5.0
+    publish_debug_image: true
+    detections_topic: /compliance/cctv2/detections        # straight to tracking
+    debug_image_topic: /compliance/cctv2/debug_image
+
+tracking_cctv2:
+  ros__parameters:
+    iou_threshold: 0.3
+    max_missed_frames: 15
+    min_hits: 1
+    input_topic: /compliance/cctv2/detections
+    output_topic: /compliance/cctv2/tracked
+    track_id_prefix: c2_
+
+confirm_cctv2:
+  ros__parameters:
+    person_confidence: 0.7
+    device_confidence: 0.6
+    proximity_iou: 0.05
+    persistence_frames: 5
+    confirm_confidence: 0.6
+    uncertain_confidence: 0.4
+    input_topic: /compliance/cctv2/tracked
+    output_topic: /compliance/cctv2/confirmed
+    room_id: room_b
+
+camera_target_cctv2:
+  ros__parameters:
+    camera_id: cctv2
+    cameras_file: /home/desh/Yoru_bot_V2/maps/cameras.json
+    input_topic: /compliance/cctv2/confirmed
+
+# ---------------- Shared nodes ----------------
+nav2_goal_sender_node:
+  ros__parameters:
+    safe_stopping_distance: 0.0     # 0 = camera-spot mode: drive exactly to
+                                    # the marked spot, face the marked heading
+    goal_cooldown: 10.0
+    goal_timeout: 60.0
+    target_max_age: 5.0
+
+compliance_fsm_node:
+  ros__parameters:
+    events_topics: ['/compliance/cctv1/confirmed', '/compliance/cctv2/confirmed']
+    monitor_confirm_duration: 3.0
+    pa_warning_duration: 10.0       # grace period after the PA announcement
+    approach_timeout: 60.0
+    direct_warning_duration: 16.0   # > comply_delay + compliance_clear_duration
+    logging_duration: 2.0
+    safe_stop_duration: 3.0
+    compliance_clear_duration: 8.0
+    cooldown_duration: 60.0
+    obstacle_stop_distance: 0.35
+    target_lost_timeout: 5.0
+
+audio_warning_node:
+  ros__parameters:
+    use_audio: true                 # sim: one machine speaks PA + direct
+    espeak_speed: 140
+    espeak_amplitude: 200
+
+incident_logger_node:
+  ros__parameters:
+    room_id: unknown                # fallback; incidents carry their own room
+    retention_days: 30
+
+incident_emailer_node:
+  ros__parameters:
+    enabled: true
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    sender_email: deshwind02@gmail.com
+    recipient_email: deshwind02@gmail.com
+    # SECURITY: set the Gmail app password via the environment, never here:
+    #   export COMPLIANCE_EMAIL_PASSWORD="xxxx xxxx xxxx xxxx"
+    # (start_sim.sh / start_server.sh source secrets.env if it exists)
+    app_password: ""
+    robot_camera_topic: /camera/image_raw
+    cctv_debug_topics: ['/compliance/cctv1/debug_image',
+                        '/compliance/cctv2/debug_image']
+    cctv_rooms: ['room_a', 'room_b']
+    retention_days: 30
+    closeup_delay: 1.5
+    min_email_interval: 30.0
+
+patrol_node:
+  ros__parameters:
+    enabled: false                  # V2: robot waits at base until a CCTV
+    waypoints: [0.0, 0.0, 0.0]      # alert dispatches it (enable to patrol)
+
+return_to_base_node:
+  ros__parameters:
+    bases: [0.0, 0.0, 0.0]          # doorway spawn doubles as charging base
+    battery_threshold: 20.0
+
+admin_joy_node:
+  ros__parameters:
+    pause_button: 9                 # PS4 OPTIONS: pause/resume autonomy
+    home_button: 2                  # PS4 TRIANGLE: return to base
+
+dashboard_node:
+  ros__parameters:
+    port: 8080
+    # No password here! First launch asks the admin to create one
+    # (stored as a salted hash in data/admin.json).
+    drive_speed: 0.2
+    turn_speed: 0.8
+    data_dir: /home/desh/Yoru_bot_V2/data
+    maps_dir: /home/desh/Yoru_bot_V2/maps
+    map_name: main_map
+    cctv_image_topics: ['/compliance/cctv1/debug_image']
+    robot_camera_topic: /camera/image_raw

@@ -1,0 +1,172 @@
+# Yoru V2 real-deployment parameters.
+#
+# Two machines, same Wi-Fi, same ROS_DOMAIN_ID (source ros_network.env):
+#   LAPTOP (server.launch.py): the laptop webcam IS the CCTV camera ->
+#     YOLO -> tracking -> confirmation -> camera-spot target; PA speech
+#     through the laptop speakers; FSM; dashboard; incident log + email.
+#   RASPBERRY PI (real_robot.launch.py): motors, lidar, Pi camera, robot
+#     speaker (direct warning), SLAM/AMCL + Nav2.
+#
+# First run: no map -> the Pi boots in mapping mode; drive from the
+# dashboard Setup screen, Save Map, mark the camera spot(s), re-run
+# ./deploy_to_pi.sh (syncs the map to the Pi), restart the robot.
+
+# ---------------- CCTV 1: the laptop webcam ----------------
+yolo_cctv1:
+  ros__parameters:
+    source_type: usb                # laptop webcam is the CCTV camera
+    device_index: 0                 # /dev/video0 (change if you have several)
+    rtsp_url: ''                    # or set source_type: rtsp for an IP camera
+    model_path: yolov8n.pt          # auto-downloads; swap in the trained
+    use_coco_class_map: true        # 6-class model + set this false later
+    confidence_threshold: 0.4
+    input_size: 640
+    process_hz: 5.0
+    publish_debug_image: true       # live view in the dashboard + email evidence
+    detections_topic: /compliance/cctv1/detections
+    debug_image_topic: /compliance/cctv1/debug_image
+
+tracking_cctv1:
+  ros__parameters:
+    iou_threshold: 0.3
+    max_missed_frames: 15
+    min_hits: 1
+    input_topic: /compliance/cctv1/detections
+    output_topic: /compliance/cctv1/tracked
+    track_id_prefix: c1_
+
+confirm_cctv1:
+  ros__parameters:
+    person_confidence: 0.7
+    device_confidence: 0.6
+    proximity_iou: 0.05
+    persistence_frames: 5
+    confirm_confidence: 0.6
+    uncertain_confidence: 0.4
+    input_topic: /compliance/cctv1/tracked
+    output_topic: /compliance/cctv1/confirmed
+    room_id: camera_1               # spoken in the PA announcement
+
+# V2: confirmed events resolve to the camera spot marked in the dashboard.
+# For a second real camera: copy the four blocks above as *_cctv2 (with its
+# own device/rtsp source + room_id), mark its spot as "cctv2" in the
+# dashboard, and launch the server with use_cctv2:=true.
+camera_target_cctv1:
+  ros__parameters:
+    camera_id: cctv1
+    cameras_file: /home/desh/Yoru_bot_V2/maps/cameras.json
+    input_topic: /compliance/cctv1/confirmed
+
+# ---------------- Shared decision nodes (run on the laptop) ----------------
+nav2_goal_sender_node:
+  ros__parameters:
+    safe_stopping_distance: 0.0     # 0 = camera-spot mode: drive exactly to
+                                    # the marked spot, face the marked heading
+    goal_cooldown: 30.0
+    goal_timeout: 60.0
+    target_max_age: 5.0
+
+compliance_fsm_node:
+  ros__parameters:
+    events_topics: ['/compliance/cctv1/confirmed']
+    monitor_confirm_duration: 5.0   # smoking must persist before the PA
+    pa_warning_duration: 20.0       # grace period: stop now and nothing happens
+    approach_timeout: 90.0
+    direct_warning_duration: 20.0
+    logging_duration: 2.0
+    safe_stop_duration: 3.0
+    compliance_clear_duration: 10.0
+    cooldown_duration: 60.0
+    obstacle_stop_distance: 0.35
+    target_lost_timeout: 8.0
+
+# Laptop speakers: PA announcement only (the robot says the direct warning)
+pa_audio_node:
+  ros__parameters:
+    use_audio: true
+    speak_pa: true
+    speak_direct: false
+    espeak_speed: 140
+    espeak_amplitude: 200
+
+# Robot speaker on the Pi: direct warning only (started by real_robot.launch.py)
+robot_audio_node:
+  ros__parameters:
+    use_audio: true
+    speak_pa: false
+    speak_direct: true
+    aplay_device: default
+    espeak_speed: 140
+    espeak_amplitude: 200
+
+incident_logger_node:
+  ros__parameters:
+    room_id: unknown                # fallback; incidents carry their own room
+    retention_days: 30
+
+incident_emailer_node:
+  ros__parameters:
+    enabled: true
+    smtp_host: smtp.gmail.com
+    smtp_port: 587
+    sender_email: deshwind02@gmail.com
+    recipient_email: deshwind02@gmail.com
+    # SECURITY: set the Gmail app password via the environment, never here:
+    #   export COMPLIANCE_EMAIL_PASSWORD="xxxx xxxx xxxx xxxx"
+    # (start_server.sh sources secrets.env if it exists)
+    app_password: ""
+    robot_camera_topic: /camera/image_raw   # Pi camera, arrives over Wi-Fi
+    cctv_debug_topics: ['/compliance/cctv1/debug_image']
+    cctv_rooms: ['camera_1']
+    retention_days: 30
+    closeup_delay: 1.5
+    min_email_interval: 30.0
+
+patrol_node:
+  ros__parameters:
+    enabled: false                  # V2: robot waits until a CCTV alert
+    waypoints: [0.0, 0.0, 0.0]      # dispatches it (enable to patrol)
+
+return_to_base_node:
+  ros__parameters:
+    bases: [0.0, 0.0, 0.0]          # charging dock pose(s) in the map frame
+    battery_threshold: 20.0
+
+# ---------------- Robot hardware (run on the Pi) ----------------
+l298n_driver_node:
+  ros__parameters:
+    ena_pin: 12
+    in1_pin: 5
+    in2_pin: 6
+    enb_pin: 13
+    in3_pin: 20
+    in4_pin: 21
+    left_encoder_pin: 17
+    right_encoder_pin: 27
+    pwm_frequency: 1000
+    encoder_ticks_per_rev: 40
+    wheel_radius: 0.033
+    wheel_separation: 0.297
+    max_wheel_speed: 0.3
+    kp: 2.0
+    ki: 0.1
+    kd: 0.5
+    cmd_vel_topic: /diff_cont/cmd_vel_unstamped   # twist_mux output
+
+admin_joy_node:
+  ros__parameters:
+    pause_button: 9                 # PS4 OPTIONS: pause/resume autonomy
+    home_button: 2                  # PS4 TRIANGLE: return to base
+
+dashboard_node:
+  ros__parameters:
+    port: 8080
+    # No password here! First launch asks the admin to create one
+    # (stored as a salted hash in data/admin.json).
+    drive_speed: 0.2
+    turn_speed: 0.8
+    data_dir: /home/desh/Yoru_bot_V2/data
+    maps_dir: /home/desh/Yoru_bot_V2/maps
+    map_name: main_map
+    cctv_image_topics: ['/compliance/cctv1/debug_image']
+    robot_camera_topic: /camera/image_raw
