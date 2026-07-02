@@ -61,11 +61,13 @@
             <material name="yellow"/>
         </visual>
 
+        <!-- Collision is a simple box (not the decorative mesh) because
+             Gazebo/ODE trimesh contacts are unreliable and let the robot
+             push through walls. Box-vs-box contacts are solid. -->
         <collision>
-            <origin xyz="${chassis_length/2} 0 ${chassis_height/2}"/>
+            <origin xyz="${chassis_length/2} 0 0.05"/>
             <geometry>
-                <mesh filename="package://yoru_base/meshes/body_bot.stl"
-                      scale="0.001 0.001 0.001"/>
+                <box size="${chassis_length} ${chassis_width} 0.1"/>
             </geometry>
         </collision>
 
