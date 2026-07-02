@@ -585,6 +585,10 @@ let boot = { needs_setup: false, has_saved_map: false, mapping_active: false };
 let cameras = [];
 let lastStatus = null;
 
+function inApp() {
+  return !document.getElementById('app').classList.contains('hidden');
+}
+
 async function api(path, body) {
   const opts = { headers: { 'X-Auth': token } };
   if (body !== undefined) {
@@ -592,7 +596,12 @@ async function api(path, body) {
     opts.body = JSON.stringify(body);
   }
   const r = await fetch(path, opts);
-  if (r.status === 401) { showLogin(); throw new Error('auth'); }
+  if (r.status === 401) {
+    // Only bounce to the sign-in screen if we were inside the app -
+    // background polls must never replace the first-run setup screen.
+    if (inApp()) showLogin();
+    throw new Error('auth');
+  }
   return r.json();
 }
 
@@ -1129,10 +1138,11 @@ function refreshFeeds() {
 
 window.addEventListener('resize', () => { if (imgReady && mapVisible) draw(); });
 
-setInterval(refresh, 2000);
-setInterval(loadIncidents, 5000);
-setInterval(() => loadMapInfo(false), 1000);
-setInterval(refreshFeeds, 700);
+// Background polls only run once signed in (never on the login/setup screens)
+setInterval(() => { if (inApp()) refresh(); }, 2000);
+setInterval(() => { if (inApp()) loadIncidents(); }, 5000);
+setInterval(() => { if (inApp()) loadMapInfo(false); }, 1000);
+setInterval(() => { if (inApp()) refreshFeeds(); }, 700);
 
 /* ------------- boot ------------- */
 (async () => {
