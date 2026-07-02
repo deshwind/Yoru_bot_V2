@@ -20,5 +20,8 @@
 
   <export>
     <build_type>ament_cmake</build_type>
+    <!-- Lets Gazebo resolve package://yoru_base/meshes/... for the chassis
+         mesh (gazebo_ros adds this to GAZEBO_MODEL_PATH at launch). -->
+    <gazebo_ros gazebo_model_path="${prefix}/.."/>
   </export>
 </package>
