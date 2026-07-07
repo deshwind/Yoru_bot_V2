@@ -119,7 +119,8 @@ incident_emailer_node:
     #   export COMPLIANCE_EMAIL_PASSWORD="xxxx xxxx xxxx xxxx"
     # (start_server.sh sources secrets.env if it exists)
     app_password: ""
-    robot_camera_topic: /camera/image_raw   # Pi camera, arrives over Wi-Fi
+    robot_camera_topic: /camera/image_raw/compressed  # Pi camera over Wi-Fi
+                                            # (raw frames are too big for it)
     cctv_debug_topics: ['/compliance/cctv1/debug_image']
     cctv_rooms: ['camera_1']
     retention_days: 30
@@ -169,10 +170,10 @@ dashboard_node:
     port: 8080
     # No password here! First launch asks the admin to create one
     # (stored as a salted hash in data/admin.json).
-    drive_speed: 0.2
-    turn_speed: 0.8
+    drive_speed: 0.1                # slow for mapping: crisper lidar scans
+    turn_speed: 0.35
     data_dir: /home/desh/Yoru_bot_V2/data
     maps_dir: /home/desh/Yoru_bot_V2/maps
     map_name: main_map
     cctv_image_topics: ['/compliance/cctv1/debug_image']
-    robot_camera_topic: /camera/image_raw
+    robot_camera_topic: /camera/image_raw/compressed

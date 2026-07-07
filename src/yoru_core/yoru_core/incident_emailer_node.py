@@ -27,11 +27,12 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 
 import cv2
+import numpy as np
 import rclpy
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import String
 
 
@@ -75,9 +76,12 @@ class IncidentEmailerNode(Node):
         self.prev_state = 'MONITORING'
         self.last_email_time = 0.0
 
+        # Robot camera arrives over Wi-Fi: prefer the .../compressed topic
+        robot_cam = self.get_parameter('robot_camera_topic').value
+        robot_cam_type = (CompressedImage if robot_cam.endswith('/compressed')
+                          else Image)
         self.create_subscription(
-            Image, self.get_parameter('robot_camera_topic').value,
-            self.robot_image_callback, 2)
+            robot_cam_type, robot_cam, self.robot_image_callback, 2)
         rooms = self.get_parameter('cctv_rooms').value
         topics = self.get_parameter('cctv_debug_topics').value
         for room, topic in zip(rooms, topics):
@@ -113,7 +117,13 @@ class IncidentEmailerNode(Node):
 
     def save_frame(self, img_msg, name):
         try:
-            frame = self.bridge.imgmsg_to_cv2(img_msg, 'bgr8')
+            if isinstance(img_msg, CompressedImage):
+                frame = cv2.imdecode(np.frombuffer(img_msg.data, np.uint8),
+                                     cv2.IMREAD_COLOR)
+                if frame is None:
+                    raise ValueError('cv2.imdecode returned None')
+            else:
+                frame = self.bridge.imgmsg_to_cv2(img_msg, 'bgr8')
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warn(f'Could not convert frame for {name}: {exc}')
             return None

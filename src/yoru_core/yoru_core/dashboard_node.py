@@ -42,7 +42,7 @@ from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy,
                        qos_profile_sensor_data)
-from sensor_msgs.msg import Image, Joy
+from sensor_msgs.msg import CompressedImage, Image, Joy
 from std_msgs.msg import Bool, Float32, String
 from tf2_ros import Buffer, TransformListener
 
@@ -140,8 +140,15 @@ class DashboardNode(Node):
                 Image, topic,
                 lambda m, key=f'cctv{i}': self.image_callback(key, m),
                 qos_profile_sensor_data)
+        # The robot camera crosses Wi-Fi: use the .../compressed topic there
+        # (raw 640x480 frames are ~1MB each and don't survive campus Wi-Fi).
         robot_cam = self.get_parameter('robot_camera_topic').value
-        if robot_cam:
+        if robot_cam and robot_cam.endswith('/compressed'):
+            self.create_subscription(
+                CompressedImage, robot_cam,
+                lambda m: self.compressed_image_callback('robot', m),
+                qos_profile_sensor_data)
+        elif robot_cam:
             self.create_subscription(
                 Image, robot_cam,
                 lambda m: self.image_callback('robot', m),
@@ -248,6 +255,15 @@ class DashboardNode(Node):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
         except Exception:  # noqa: BLE001 - unsupported encoding
+            return
+        with self.lock:
+            self.frames[key] = frame
+            self.frame_times[key] = time.monotonic()
+
+    def compressed_image_callback(self, key, msg):
+        frame = cv2.imdecode(np.frombuffer(msg.data, np.uint8),
+                             cv2.IMREAD_COLOR)
+        if frame is None:
             return
         with self.lock:
             self.frames[key] = frame

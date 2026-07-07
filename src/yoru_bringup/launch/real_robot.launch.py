@@ -105,9 +105,11 @@ def generate_launch_description():
             os.path.join(yoru_base_dir, 'launch', 'rplidar.launch.py')))
 
     # Pi Camera Module (libcamera) - needs: sudo apt install ros-humble-camera-ros
+    # format BGR888: the IMX477 otherwise auto-selects NV21, which the
+    # JPEG compressor and cv_bridge cannot handle (empty/blank frames)
     camera_picam = Node(
         package='camera_ros', executable='camera_node', name='camera',
-        parameters=[{'width': 640, 'height': 480}],
+        parameters=[{'width': 640, 'height': 480, 'format': 'BGR888'}],
         remappings=[('/camera/camera_info', '/camera/camera_info'),
                     ('/camera/image_raw', '/camera/image_raw')],
         condition=LaunchConfigurationEquals('camera', 'picam'),
