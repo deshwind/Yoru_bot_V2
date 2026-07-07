@@ -23,8 +23,9 @@ track 32cm (measured).
   (twist_mux output in, /odom + TF out), kinematics + odometry on the Pi.
 - Encoder polarity fixed in firmware (forward was counting negative on
   both sides — bench-verified with single-wheel pulses).
-- **enc_counts_per_rev = 3166**, measured by hand-rotating each wheel one
-  revolution (3 samples: 3145/3163/3189; ≈11PPR × 4 × ~72:1 gearbox).
+- **enc_counts_per_rev = 1965**, re-measured by hand-rotating the wheels
+  one revolution (left 1959 / right 1977; an earlier session measured
+  ~3166 — first hand-turns were over-rotated; ≈11PPR × 4 × ~45:1 gearbox).
 - Configs updated to measured chassis: wheel_radius 0.0325, separation
   0.32 (yoru_real.yaml, xacro, sim controller + gazebo diff_drive).
 

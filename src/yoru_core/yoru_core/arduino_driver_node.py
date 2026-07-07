@@ -39,7 +39,7 @@ class ArduinoDriverNode(Node):
         self.declare_parameter('serial_port', '/dev/ttyACM0')
         self.declare_parameter('baud_rate', 57600)
         # measured 2026-07-07 by hand-rotating the wheels one revolution
-        self.declare_parameter('enc_counts_per_rev', 3166)
+        self.declare_parameter('enc_counts_per_rev', 1965)
         self.declare_parameter('wheel_radius', 0.0325)
         self.declare_parameter('wheel_separation', 0.32)
         self.declare_parameter('max_wheel_speed', 0.3)  # m/s clamp

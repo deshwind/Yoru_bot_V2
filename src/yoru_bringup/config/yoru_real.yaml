@@ -148,7 +148,7 @@ arduino_driver_node:
   ros__parameters:
     serial_port: /dev/serial/by-id/usb-Arduino_LLC_Arduino_Nano_Every_5B65273751544B5931202020FF124545-if00
     baud_rate: 57600
-    enc_counts_per_rev: 3166        # measured by hand-rotation 2026-07-07
+    enc_counts_per_rev: 1965        # re-measured by hand-rotation 2026-07-07
     wheel_radius: 0.0325            # 6.5cm wheels
     wheel_separation: 0.32          # measured center-to-center
     max_wheel_speed: 0.3
