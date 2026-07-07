@@ -38,6 +38,7 @@ setup(
             'patrol_node = yoru_core.patrol_node:main',
             'return_to_base_node = yoru_core.return_to_base_node:main',
             'l298n_driver_node = yoru_core.l298n_driver_node:main',
+            'arduino_driver_node = yoru_core.arduino_driver_node:main',
             'admin_joy_node = yoru_core.admin_joy_node:main',
             'dashboard_node = yoru_core.dashboard_node:main',
             'camera_publisher_node = yoru_core.camera_publisher_node:main',

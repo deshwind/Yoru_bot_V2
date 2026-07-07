@@ -137,25 +137,27 @@ return_to_base_node:
     battery_threshold: 20.0
 
 # ---------------- Robot hardware (run on the Pi) ----------------
-l298n_driver_node:
+# Motors: Pi -> Arduino Nano Every (firmware/yoru_motor_bridge) -> L298N.
+# The Arduino does PWM + encoder counting + PID; this node does the
+# kinematics + odometry. Flash the firmware with:
+#   arduino-cli compile -b arduino:megaavr:nona4809 firmware/yoru_motor_bridge
+#   arduino-cli upload -p /dev/ttyACM0 -b arduino:megaavr:nona4809 \
+#       firmware/yoru_motor_bridge
+arduino_driver_node:
   ros__parameters:
-    ena_pin: 12
-    in1_pin: 5
-    in2_pin: 6
-    enb_pin: 13
-    in3_pin: 20
-    in4_pin: 21
-    left_encoder_pin: 17
-    right_encoder_pin: 27
-    pwm_frequency: 1000
-    encoder_ticks_per_rev: 40
-    wheel_radius: 0.033
-    wheel_separation: 0.297
+    serial_port: /dev/serial/by-id/usb-Arduino_LLC_Arduino_Nano_Every_5B65273751544B5931202020FF124545-if00
+    baud_rate: 57600
+    enc_counts_per_rev: 3166        # measured by hand-rotation 2026-07-07
+    wheel_radius: 0.0325            # 6.5cm wheels
+    wheel_separation: 0.32          # measured center-to-center
     max_wheel_speed: 0.3
-    kp: 2.0
-    ki: 0.1
-    kd: 0.5
+    kp: 20                          # onboard PID: (Kp*err + ...)/Ko
+    kd: 12
+    ki: 0
+    ko: 50
     cmd_vel_topic: /diff_cont/cmd_vel_unstamped   # twist_mux output
+    cmd_timeout: 0.5
+    loop_rate: 20.0
 
 admin_joy_node:
   ros__parameters:

@@ -1,5 +1,47 @@
 # Yoru V2 — Development Log
 
+## Session 2 — 2026-07-07 (real hardware bring-up on the Pi)
+
+### Hardware as actually wired (differs from V1 plan)
+
+Pi 4 ── ribbon ── HQ Camera (IMX477); USB ── RPLIDAR A1 (CP2102, ttyUSB0);
+USB ── **Arduino Nano Every** (ttyACM0) ── L298N ── motors + quadrature
+encoders. Wiring follows the ROSArduinoBridge standard map (same as
+github.com/sushanthsujeerkumar/Astra_Real_robot). Wheels Ø65mm × 25mm,
+track 32cm (measured).
+
+### What was built
+
+- **firmware/yoru_motor_bridge/**: ROSArduinoBridge port for the Nano
+  Every (ATmega4809) — the stock ATmega328 PCINT encoder ISRs replaced
+  with attachInterrupt(); same 57600-baud e/m/o/r/u protocol, onboard
+  PID @30Hz, 2s auto-stop. Flash from the Pi:
+  `arduino-cli compile|upload -b arduino:megaavr:nona4809` (arduino-cli
+  in ~/.local/bin).
+- **arduino_driver_node** (yoru_core): serial bridge replacing the GPIO
+  l298n_driver_node in real_robot.launch.py; same topic contract
+  (twist_mux output in, /odom + TF out), kinematics + odometry on the Pi.
+- Encoder polarity fixed in firmware (forward was counting negative on
+  both sides — bench-verified with single-wheel pulses).
+- **enc_counts_per_rev = 3166**, measured by hand-rotating each wheel one
+  revolution (3 samples: 3145/3163/3189; ≈11PPR × 4 × ~72:1 gearbox).
+- Configs updated to measured chassis: wheel_radius 0.0325, separation
+  0.32 (yoru_real.yaml, xacro, sim controller + gazebo diff_drive).
+
+### Verified working (2026-07-07, on the robot)
+
+/scan 6.8Hz, /camera/image_raw 17.3Hz (IMX477 via camera_ros), /odom
+17.6Hz, slam_toolbox mapping, Nav2 up. Drive test via cmd_vel_joy:
+0.1m/s for 2s → odom +0.233m, lateral drift 0.25mm.
+
+### Next steps
+
+1. Map the real room: laptop `./start_server.sh`, dashboard Setup screen,
+   drive around, Save Map, mark the camera spot.
+2. Re-check camera calibration warning (no imx477 yaml — harmless, but
+   calibrate if the detector needs undistorted frames).
+3. Full hardware escalation test (CCTV smoking → PA → robot dispatch).
+
 ## Session 1 — 2026-07-02 (project built from zero to working sim + real detection)
 
 ### What was decided

@@ -95,8 +95,9 @@ def generate_launch_description():
         launch_arguments={'use_sim_time': 'false',
                           'use_ros2_control': 'false'}.items())
 
+    # Pi -> Arduino Nano Every (firmware/yoru_motor_bridge) -> L298N
     motor_driver = Node(
-        package='yoru_core', executable='l298n_driver_node',
+        package='yoru_core', executable='arduino_driver_node',
         parameters=[params_file], output='screen')
 
     lidar = IncludeLaunchDescription(
