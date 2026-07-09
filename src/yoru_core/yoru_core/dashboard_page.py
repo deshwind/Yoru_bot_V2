@@ -481,12 +481,20 @@ PAGE_HTML = r"""<!DOCTYPE html>
     <div id="view-cameras" class="view">
       <div class="row" style="margin-top:0">
         <div class="panel glass">
-          <h2>CCTV 1 &mdash; detection view</h2>
+          <h2>CCTV 1 &mdash; built-in webcam</h2>
           <div class="feedbox">
             <img id="feed-cctv0" class="hidden" alt="">
             <div class="nosig" id="nosig-cctv0">Waiting for CCTV frames&hellip;</div>
           </div>
           <p class="note" id="alertNote">No active detection.</p>
+        </div>
+        <div class="panel glass">
+          <h2>CCTV 2 &mdash; USB camera</h2>
+          <div class="feedbox">
+            <img id="feed-cctv1" class="hidden" alt="">
+            <div class="nosig" id="nosig-cctv1">Waiting for CCTV 2 frames&hellip;</div>
+          </div>
+          <p class="note">Green boxes = persons, red boxes = cigarettes.</p>
         </div>
         <div class="panel glass">
           <h2>Robot onboard camera</h2>
@@ -1138,6 +1146,7 @@ async function refreshFeed(key) {
 function refreshFeeds() {
   if (activeView !== 'cameras') return;
   refreshFeed('cctv0');
+  refreshFeed('cctv1');
   refreshFeed('robot');
 }
 

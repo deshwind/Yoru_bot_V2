@@ -44,7 +44,10 @@ def launch_compliance(context):
     sim = LaunchConfiguration('sim').perform(context).lower() == 'true'
     use_cctv2 = LaunchConfiguration('use_cctv2').perform(context)
     if use_cctv2 == 'auto':
-        use_cctv2 = 'true' if sim else 'false'
+        # Two CCTV pipelines everywhere: sim has two room cameras, real has
+        # the built-in webcam (cctv1) + the Logitech C920 (cctv2). Pass
+        # use_cctv2:=false if the second camera is unplugged.
+        use_cctv2 = 'true'
 
     config = 'yoru_sim.yaml' if sim else 'yoru_real.yaml'
     print(f'[yoru] server profile: {"SIMULATION" if sim else "REAL ROBOT"} '

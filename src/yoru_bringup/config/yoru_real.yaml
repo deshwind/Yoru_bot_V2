@@ -25,7 +25,7 @@ yolo_cctv1:
     extra_model_path: /home/desh/Yoru_bot_V2/cigarette_yolov8.pt
     extra_confidence_threshold: 0.35
     input_size: 640
-    process_hz: 5.0
+    process_hz: 3.0
     publish_debug_image: true       # live view in the dashboard + email evidence
     detections_topic: /compliance/cctv1/detections
     debug_image_topic: /compliance/cctv1/debug_image
@@ -52,14 +52,55 @@ confirm_cctv1:
     room_id: camera_1               # spoken in the PA announcement
 
 # V2: confirmed events resolve to the camera spot marked in the dashboard.
-# For a second real camera: copy the four blocks above as *_cctv2 (with its
-# own device/rtsp source + room_id), mark its spot as "cctv2" in the
-# dashboard, and launch the server with use_cctv2:=true.
 camera_target_cctv1:
   ros__parameters:
     camera_id: cctv1
     cameras_file: /home/desh/Yoru_bot_V2/maps/cameras.json
     input_topic: /compliance/cctv1/confirmed
+
+# ---------------- CCTV 2: Logitech C920 USB camera ----------------
+# Mark its robot spot as "cctv2" in the dashboard Setup screen.
+yolo_cctv2:
+  ros__parameters:
+    source_type: usb
+    device_index: 2                 # C920 = /dev/video2 (0 = built-in webcam)
+    model_path: yolov8n.pt
+    use_coco_class_map: true
+    confidence_threshold: 0.4
+    extra_model_path: /home/desh/Yoru_bot_V2/cigarette_yolov8.pt
+    extra_confidence_threshold: 0.35
+    input_size: 640
+    process_hz: 3.0
+    publish_debug_image: true
+    detections_topic: /compliance/cctv2/detections
+    debug_image_topic: /compliance/cctv2/debug_image
+
+tracking_cctv2:
+  ros__parameters:
+    iou_threshold: 0.3
+    max_missed_frames: 15
+    min_hits: 1
+    input_topic: /compliance/cctv2/detections
+    output_topic: /compliance/cctv2/tracked
+    track_id_prefix: c2_
+
+confirm_cctv2:
+  ros__parameters:
+    person_confidence: 0.7
+    device_confidence: 0.6
+    proximity_iou: 0.05
+    persistence_frames: 5
+    confirm_confidence: 0.6
+    uncertain_confidence: 0.4
+    input_topic: /compliance/cctv2/tracked
+    output_topic: /compliance/cctv2/confirmed
+    room_id: camera_2               # spoken in the PA announcement
+
+camera_target_cctv2:
+  ros__parameters:
+    camera_id: cctv2
+    cameras_file: /home/desh/Yoru_bot_V2/maps/cameras.json
+    input_topic: /compliance/cctv2/confirmed
 
 # ---------------- Shared decision nodes (run on the laptop) ----------------
 nav2_goal_sender_node:
@@ -72,7 +113,7 @@ nav2_goal_sender_node:
 
 compliance_fsm_node:
   ros__parameters:
-    events_topics: ['/compliance/cctv1/confirmed']
+    events_topics: ['/compliance/cctv1/confirmed', '/compliance/cctv2/confirmed']
     monitor_confirm_duration: 5.0   # smoking must persist before the PA
     pa_warning_duration: 20.0       # grace period: stop now and nothing happens
     approach_timeout: 90.0
@@ -121,8 +162,9 @@ incident_emailer_node:
     app_password: ""
     robot_camera_topic: /camera/image_raw/compressed  # Pi camera over Wi-Fi
                                             # (raw frames are too big for it)
-    cctv_debug_topics: ['/compliance/cctv1/debug_image']
-    cctv_rooms: ['camera_1']
+    cctv_debug_topics: ['/compliance/cctv1/debug_image',
+                        '/compliance/cctv2/debug_image']
+    cctv_rooms: ['camera_1', 'camera_2']
     retention_days: 30
     closeup_delay: 1.5
     min_email_interval: 30.0
@@ -175,5 +217,6 @@ dashboard_node:
     data_dir: /home/desh/Yoru_bot_V2/data
     maps_dir: /home/desh/Yoru_bot_V2/maps
     map_name: main_map
-    cctv_image_topics: ['/compliance/cctv1/debug_image']
+    cctv_image_topics: ['/compliance/cctv1/debug_image',
+                        '/compliance/cctv2/debug_image']
     robot_camera_topic: /camera/image_raw/compressed
