@@ -70,9 +70,18 @@ class EventConfirmationNode(Node):
         self.declare_parameter('output_topic', '/compliance/confirmed_events')
         # Which room/zone this camera observes; carried into metadata and incidents
         self.declare_parameter('room_id', '')
+        # A specialist-model device this confident outranks a COCO confounder
+        # (C7): a real cigarette isn't suppressed by a phone in the other hand
+        self.declare_parameter('confounder_override_confidence', 0.75)
+        # Soft vape hint: COCO sees vapes as 'cell phone'. A phone-like object
+        # held AT THE MOUTH persistently is flagged as a possible vape on the
+        # dashboard only - it never escalates (PA/robot/email) until the
+        # trained vape_device model can actually confirm it.
+        self.declare_parameter('vape_hint', True)
 
         self.persistence_required = int(self.get_parameter('persistence_frames').value)
         self.persistence = {}  # track_id -> consecutive satisfied frames
+        self.phone_persistence = {}  # track_id -> consecutive phone-at-mouth frames
 
         self.confirmed_pub = self.create_publisher(
             Detection2DArray, self.get_parameter('output_topic').value, 10)
@@ -147,17 +156,48 @@ class EventConfirmationNode(Node):
 
             # C7: confounder near the mouth -> high false-positive risk
             fp_risk = 'low'
+            phone_at_mouth = False
             for con in confounders:
                 if in_mouth_region(person.bbox, con.bbox):
                     fp_risk = 'high'
+                    if con.results[0].hypothesis.class_id == 'mobile_phone':
+                        phone_at_mouth = True
                     break
 
             device_score = best_device.results[0].hypothesis.score if c2 else 0.0
             confidence = (0.4 * device_score + 0.3 * best_prox
                           + 0.2 * persistence_score + 0.1 * support_score)
 
+            # A high-confidence specialist detection outranks the confounder
+            # guard: the cigarette model is far more trustworthy than COCO's
+            # guess that something near the face is a phone/pen.
+            override_at = self.get_parameter(
+                'confounder_override_confidence').value
+            if fp_risk == 'high' and c2 and device_score >= override_at:
+                fp_risk = 'overridden'
+
             is_confirmed = (confidence >= confirm_at and c1 and c2 and c4
                             and fp_risk != 'high')
+
+            # Soft vape hint (dashboard only, never escalates): a phone-like
+            # object held at the mouth for the persistence window
+            if self.get_parameter('vape_hint').value and c1 \
+                    and phone_at_mouth and not is_confirmed:
+                self.phone_persistence[track_id] = \
+                    self.phone_persistence.get(track_id, 0) + 1
+            else:
+                self.phone_persistence[track_id] = 0
+            if self.phone_persistence.get(track_id, 0) \
+                    >= self.persistence_required:
+                hint = String()
+                hint.data = json.dumps({
+                    'track_id': track_id,
+                    'room': self.get_parameter('room_id').value,
+                    'status': 'possible_vape',
+                    'confidence': None,
+                    'event_class': 'possible_vape',
+                })
+                self.metadata_pub.publish(hint)
             status = ('confirmed' if is_confirmed
                       else 'uncertain' if confidence >= uncertain_at
                       else 'rejected')
@@ -193,6 +233,9 @@ class EventConfirmationNode(Node):
         # Forget tracks that disappeared (volatile, privacy-preserving)
         for stale in [t for t in self.persistence if t not in seen_tracks]:
             del self.persistence[stale]
+        for stale in [t for t in self.phone_persistence
+                      if t not in seen_tracks]:
+            del self.phone_persistence[stale]
 
         if confirmed.detections:
             self.confirmed_pub.publish(confirmed)

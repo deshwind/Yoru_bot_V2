@@ -723,13 +723,28 @@ async function refresh() {
     const note = document.getElementById('alertNote');
     if (s.alert && s.alert.status) {
       chip.classList.remove('hidden');
-      chip.textContent = (s.alert.status === 'confirmed' ? '🚨 ' : '👀 ')
-        + (s.alert.status === 'confirmed' ? 'Smoking CONFIRMED' : 'Checking…')
-        + (s.alert.room ? ' · ' + s.alert.room : '');
-      note.textContent = `Detection: ${s.alert.status}` +
-        (s.alert.event_class ? ` (${s.alert.event_class})` : '') +
-        (s.alert.confidence != null ? ` · confidence ${s.alert.confidence}` : '');
-      note.className = 'note ' + (s.alert.status === 'confirmed' ? 'bad' : '');
+      const room = s.alert.room ? ' · ' + s.alert.room : '';
+      if (s.alert.status === 'confirmed') {
+        chip.className = 'badge b-alert';
+        chip.textContent = '🚨 Smoking CONFIRMED' + room;
+        note.textContent = `Detection: confirmed` +
+          (s.alert.event_class ? ` (${s.alert.event_class})` : '') +
+          (s.alert.confidence != null ? ` · confidence ${s.alert.confidence}` : '');
+        note.className = 'note bad';
+      } else if (s.alert.status === 'possible_vape') {
+        chip.className = 'badge b-manual';
+        chip.textContent = '💨 Possible vape (unverified)' + room;
+        note.textContent = 'Phone-like object held at the mouth — could be a ' +
+          'vape. Not escalated: needs the trained vape model to confirm.';
+        note.className = 'note';
+      } else {
+        chip.className = 'badge b-alert';
+        chip.textContent = '👀 Checking…' + room;
+        note.textContent = `Detection: ${s.alert.status}` +
+          (s.alert.event_class ? ` (${s.alert.event_class})` : '') +
+          (s.alert.confidence != null ? ` · confidence ${s.alert.confidence}` : '');
+        note.className = 'note';
+      }
     } else {
       chip.classList.add('hidden');
       note.textContent = 'No active detection.';
