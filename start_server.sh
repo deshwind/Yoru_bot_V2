@@ -14,6 +14,25 @@ source ./ros_network.env
 # Gmail app password etc. (git-ignored) - see secrets.env.example
 [ -f secrets.env ] && source ./secrets.env
 
+# The FastDDS discovery server lives on the robot (campus Wi-Fi blocks
+# multicast). If the robot is off/unreachable, fall back to normal local
+# discovery so the laptop still works standalone (sim, PA tests, etc.) -
+# nodes on ONE machine never need the discovery server.
+for a in "$@"; do
+    if [ "$a" = "sim" ] || [ "$a" = "sim:=true" ]; then
+        # Simulation pairing is fully local (start_sim.sh does the same)
+        unset ROS_DISCOVERY_SERVER ROS_SUPER_CLIENT
+    fi
+done
+if [ -n "$ROS_DISCOVERY_SERVER" ]; then
+    DS_HOST="${ROS_DISCOVERY_SERVER%%:*}"
+    if ! ping -c 1 -W 1 "$DS_HOST" > /dev/null 2>&1; then
+        echo "[yoru] robot ($DS_HOST) unreachable - STANDALONE mode"
+        echo "[yoru] (start the robot first if you want the real robot connected)"
+        unset ROS_DISCOVERY_SERVER ROS_SUPER_CLIENT
+    fi
+fi
+
 if [ ! -f install/setup.bash ]; then
     echo "First run: building workspace..."
     colcon build --symlink-install

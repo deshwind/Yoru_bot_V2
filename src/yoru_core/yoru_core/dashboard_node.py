@@ -90,6 +90,8 @@ class DashboardNode(Node):
 
         self.pause_pub = self.create_publisher(Bool, '/compliance/autonomy_paused', 10)
         self.home_pub = self.create_publisher(Bool, '/compliance/return_to_base', 10)
+        # Test-announcement button: exercises the real PA path end-to-end
+        self.pa_pub = self.create_publisher(String, '/compliance/pa_warning', 10)
         # cmd_vel_tracker: twist_mux priority 20 (above Nav2, below joystick)
         self.drive_pub = self.create_publisher(Twist, 'cmd_vel_tracker', 10)
         # Relocalisation: consumed by AMCL / slam_toolbox localization mode
@@ -274,15 +276,16 @@ class DashboardNode(Node):
                                  round(msg.pose.position.y, 2))
 
     def map_callback(self, msg):
-        """Renders the occupancy grid to a PNG (free=white, occupied=dark,
-        unknown=transparent) and caches the world metadata for the client."""
+        """Renders the occupancy grid to a PNG (walls/edges=white,
+        ground=grey, unknown=transparent) and caches the world metadata
+        for the client."""
         w, h = msg.info.width, msg.info.height
         grid = np.array(msg.data, dtype=np.int8).reshape(h, w)
         rgba = np.zeros((h, w, 4), dtype=np.uint8)
         free = (grid >= 0) & (grid < 50)
         occ = grid >= 50
-        rgba[free] = (246, 247, 250, 255)
-        rgba[occ] = (66, 74, 96, 255)
+        rgba[free] = (145, 148, 155, 255)   # ground: grey
+        rgba[occ] = (255, 255, 255, 255)    # walls/edges: white
         rgba = cv2.flip(rgba, 0)  # grid origin is bottom-left; images top-left
         ok, png = cv2.imencode('.png', cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA))
         if not ok:
@@ -453,6 +456,24 @@ class DashboardNode(Node):
         self.home_pub.publish(Bool(data=True))
         self.get_logger().warn('DASHBOARD: return-to-base requested')
         return {'ok': True}
+
+    def api_test_pa(self):
+        """Publishes a test message on the real PA topic, so the same audio
+        node/speaker chain used for violations proves itself in one click."""
+        msg = String()
+        msg.data = json.dumps({
+            'message': 'This is a test announcement from the Yoru dashboard. '
+                       'The public address system is working.',
+            'test': True,
+        })
+        self.pa_pub.publish(msg)
+        listeners = self.pa_pub.get_subscription_count()
+        self.get_logger().warn(
+            f'DASHBOARD: test announcement published ({listeners} audio '
+            'node(s) listening)')
+        note = '' if listeners else \
+            'No audio node is subscribed - is the server fully started?'
+        return {'ok': True, 'listeners': listeners, 'note': note}
 
     def api_stop(self):
         self.pause_pub.publish(Bool(data=True))
@@ -667,6 +688,8 @@ class DashboardNode(Node):
                     self.send_json(node.api_set_mode(body))
                 elif self.path == '/api/home':
                     self.send_json(node.api_home())
+                elif self.path == '/api/test_pa':
+                    self.send_json(node.api_test_pa())
                 elif self.path == '/api/stop':
                     self.send_json(node.api_stop())
                 elif self.path == '/api/drive':

@@ -19,11 +19,14 @@ import subprocess
 import wave
 
 OUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'audio')
+# Keep in sync with PA_MESSAGE / DIRECT_MESSAGE in compliance_fsm_node.py
+# (these files are the fallback when espeak-ng is not installed; espeak
+# additionally speaks the camera/room name dynamically)
 MESSAGES = {
-    'pa_warning': 'Attention please. Smoking and vaping are prohibited in this '
-                  'area. Please stop immediately.',
-    'direct_warning': 'This is a final warning. Smoking and vaping are not '
-                      'permitted here. This incident will be reported.',
+    'pa_warning': 'Attention please. Smoking is not allowed here. '
+                  'Please stop immediately.',
+    'direct_warning': 'This is a final warning. Smoking is not allowed here. '
+                      'This incident has been recorded and will be reported.',
 }
 
 

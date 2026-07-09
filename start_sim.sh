@@ -20,6 +20,10 @@ source ./ros_network.env
 # Gmail app password etc. (git-ignored) - see secrets.env.example
 [ -f secrets.env ] && source ./secrets.env
 
+# Simulation is fully local: never route discovery through the robot's
+# FastDDS discovery server (it may be off, and sim doesn't need it).
+unset ROS_DISCOVERY_SERVER ROS_SUPER_CLIENT
+
 # Build once if the workspace has not been built yet
 if [ ! -f install/setup.bash ]; then
     echo "First run: building workspace..."

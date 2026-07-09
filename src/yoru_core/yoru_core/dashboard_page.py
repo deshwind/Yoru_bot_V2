@@ -458,6 +458,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
           <h2>Robot Control</h2>
           <div class="btnrow">
             <button id="modeBtn" class="primary" onclick="toggleMode()">&mdash;</button>
+            <button onclick="testPA()">&#128226;&nbsp; Test Announcement</button>
             <button onclick="goHome()">&#8962;&nbsp; Return to Base</button>
             <button class="danger" onclick="estop()">&#9632;&nbsp; Emergency Stop</button>
           </div>
@@ -797,6 +798,10 @@ function renderTable() {
 }
 
 async function toggleMode() { await api('/api/mode', { paused: !paused }); refresh(); }
+async function testPA() {
+  const r = await api('/api/test_pa', {});
+  toast(r.note || 'Test announcement sent - you should hear it now');
+}
 async function goHome()    { await api('/api/home', {}); toast('Returning to base'); }
 async function estop()     { await api('/api/stop', {}); refresh();
                              toast('EMERGENCY STOP - autonomy paused'); }
