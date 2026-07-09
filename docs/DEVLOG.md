@@ -1,5 +1,40 @@
 # Yoru V2 — Development Log
 
+## Session 3 — 2026-07-09 (PA announcements, second CCTV, map colors)
+
+### Fixed / built
+
+- **Silent PA root cause**: discovery routed through the robot's FastDDS
+  server, so with the Pi off the laptop's nodes never discovered each
+  other. `start_server.sh` now falls back to local discovery when the
+  robot is unreachable ("STANDALONE mode"); sim mode is always local.
+- **Voice**: espeak-ng installed → announcements are dynamic (speak the
+  camera name); pa/direct mp3 regenerated with the V2 message (gTTS) as
+  fallback. **Test Announcement button** on the dashboard Control screen
+  exercises the real PA path and reports listening audio nodes.
+- **Second CCTV**: Logitech C920 (/dev/video2) as full cctv2 pipeline —
+  dual-model YOLO, confirmation (room `camera_2`), FSM/emailer/camera-spot
+  wiring, live view on the Cameras screen (3 feeds). Both cameras
+  confirmed working live. process_hz 5→3 per camera (CPU ~8→~5 cores).
+- **Map colors**: dashboard map renders walls/edges white, ground grey.
+
+### Notes
+
+- Old leaked PAT finally revoked; new fine-grained token in gh
+  (`~/.config/gh/hosts.yml`). Ubuntu's gh 2.4.0 credential helper doesn't
+  feed git, so pushes use the token explicitly.
+- Pre-existing broken `nvidia-driver-580` dpkg state on the laptop (also
+  why YOLO runs on CPU) — untouched, fix someday.
+- **Pi is stale**: re-run `./deploy_to_pi.sh` before the next robot
+  session (needs sessions 3 changes).
+
+### Next steps
+
+1. Map the real room (robot + laptop), mark `cctv1` and `cctv2` spots.
+2. Full hardware escalation test with both cameras.
+3. Polish: email/incident status in dashboard, unique admin password,
+   6-class model training.
+
 ## Session 2 — 2026-07-07 (real hardware bring-up on the Pi)
 
 ### Hardware as actually wired (differs from V1 plan)
