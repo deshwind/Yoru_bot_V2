@@ -1,5 +1,36 @@
 # Yoru V2 — Development Log
 
+## Session 4 — 2026-07-09 (vape problem, GPU repair, interim soft alert)
+
+### The vape problem
+
+A vape at the mouth is detected by COCO as `cell phone` → `mobile_phone`,
+which is a C7 confounder — so vaping not only went undetected, it actively
+suppressed escalation. No config fix exists (remapping phone→vape would
+false-alarm on real phone calls). Proper fix: train the planned model with
+a real `vape_device` class.
+
+### Done
+
+- **Interim soft alert** (commit 0c80d14): phone-like object held at the
+  mouth for the persistence window → amber "possible vape (unverified)"
+  chip on the dashboard; never announces/dispatches/emails. Plus
+  `confounder_override_confidence` (0.75): a high-confidence specialist
+  cigarette detection is no longer blocked by a phone/pen near the face.
+- **NVIDIA driver repaired**: root cause was Ubuntu HWE kernel 6.8 needing
+  gcc-12 while system gcc was 11 → nvidia-dkms-580 module build failed →
+  userspace 580.159 vs old loaded module 580.95 mismatch. Fix: gcc-12
+  installed and made default (update-alternatives), DKMS rebuilt +
+  installed, reboot. Verified: nvidia-smi OK, torch.cuda available
+  (RTX 3050 Ti, 4GB, CUDA 13.0). Detection restored to 5 fps per camera
+  (was lowered to 3 for CPU).
+
+### Next (in progress)
+
+Train the 3-class specialist (`cigarette`, `vape_device`, `smoke_vapour`)
+on the RTX 3050 Ti using public datasets, replacing cigarette_yolov8.pt
+as `extra_model_path`. Then vape at mouth = real escalation.
+
 ## Session 3 — 2026-07-09 (PA announcements, second CCTV, map colors)
 
 ### Fixed / built

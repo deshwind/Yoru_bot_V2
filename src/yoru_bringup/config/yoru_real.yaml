@@ -25,7 +25,7 @@ yolo_cctv1:
     extra_model_path: /home/desh/Yoru_bot_V2/cigarette_yolov8.pt
     extra_confidence_threshold: 0.35
     input_size: 640
-    process_hz: 3.0
+    process_hz: 5.0
     publish_debug_image: true       # live view in the dashboard + email evidence
     detections_topic: /compliance/cctv1/detections
     debug_image_topic: /compliance/cctv1/debug_image
@@ -70,7 +70,7 @@ yolo_cctv2:
     extra_model_path: /home/desh/Yoru_bot_V2/cigarette_yolov8.pt
     extra_confidence_threshold: 0.35
     input_size: 640
-    process_hz: 3.0
+    process_hz: 5.0
     publish_debug_image: true
     detections_topic: /compliance/cctv2/detections
     debug_image_topic: /compliance/cctv2/debug_image
