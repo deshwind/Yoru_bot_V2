@@ -23,3 +23,7 @@ maps/*.posegraph
 
 # logs / evidence
 compliance_robot_logs/
+
+# training artifacts
+datasets/
+runs/
