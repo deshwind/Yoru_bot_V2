@@ -690,7 +690,7 @@ function go(view) {
   document.getElementById('viewTitle').textContent = TITLES[view];
   mapVisible = (view === 'map' || view === 'setup');
   if (mapVisible) loadMapInfo(true);
-  if (view === 'cameras') refreshFeeds();
+  if (view === 'cameras') startStreams(); else stopStreams();
 }
 
 /* ------------- status ------------- */
@@ -1140,29 +1140,34 @@ async function clearCostmaps() {
                   : 'Costmap services not available');
 }
 
-/* ------------- live camera feeds ------------- */
-async function refreshFeed(key) {
-  const img = document.getElementById('feed-' + key);
-  const nosig = document.getElementById('nosig-' + key);
-  try {
-    const r = await fetch('/api/cam.jpg?src=' + key + '&t=' + Date.now(),
-                          { headers: { 'X-Auth': token } });
-    if (!r.ok) throw new Error('no frame');
-    const url = URL.createObjectURL(await r.blob());
-    img.onload = () => URL.revokeObjectURL(url);
-    img.src = url;
-    img.classList.remove('hidden');
-    nosig.classList.add('hidden');
-  } catch (e) {
-    img.classList.add('hidden');
-    nosig.classList.remove('hidden');
+/* ------------- live camera streams (MJPEG - smooth CCTV video) ------------- */
+const FEEDS = ['cctv0', 'cctv1', 'robot'];
+let streamsOn = false;
+function startStreams() {
+  if (streamsOn) return;
+  streamsOn = true;
+  for (const key of FEEDS) {
+    const img = document.getElementById('feed-' + key);
+    const nosig = document.getElementById('nosig-' + key);
+    img.onload = () => { img.classList.remove('hidden');
+                         nosig.classList.add('hidden'); };
+    img.onerror = () => { img.classList.add('hidden');
+                          nosig.classList.remove('hidden'); };
+    // persistent multipart stream: the server pushes every frame as it
+    // arrives - no polling, no stutter
+    img.src = '/api/stream.mjpg?src=' + key + '&t=' + token;
   }
 }
-function refreshFeeds() {
-  if (activeView !== 'cameras') return;
-  refreshFeed('cctv0');
-  refreshFeed('cctv1');
-  refreshFeed('robot');
+function stopStreams() {
+  if (!streamsOn) return;
+  streamsOn = false;
+  for (const key of FEEDS) {
+    const img = document.getElementById('feed-' + key);
+    img.onload = img.onerror = null;
+    img.removeAttribute('src');   // closes the connection
+    img.classList.add('hidden');
+    document.getElementById('nosig-' + key).classList.remove('hidden');
+  }
 }
 
 window.addEventListener('resize', () => { if (imgReady && mapVisible) draw(); });
@@ -1171,7 +1176,6 @@ window.addEventListener('resize', () => { if (imgReady && mapVisible) draw(); })
 setInterval(() => { if (inApp()) refresh(); }, 2000);
 setInterval(() => { if (inApp()) loadIncidents(); }, 5000);
 setInterval(() => { if (inApp()) loadMapInfo(false); }, 1000);
-setInterval(() => { if (inApp()) refreshFeeds(); }, 700);
 
 /* ------------- boot ------------- */
 (async () => {

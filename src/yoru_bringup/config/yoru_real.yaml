@@ -220,6 +220,6 @@ dashboard_node:
     data_dir: /home/desh/Yoru_bot_V2/data
     maps_dir: /home/desh/Yoru_bot_V2/maps
     map_name: main_map
-    cctv_image_topics: ['/compliance/cctv1/debug_image',
-                        '/compliance/cctv2/debug_image']
+    cctv_image_topics: ['/compliance/cctv1/debug_image/compressed',
+                        '/compliance/cctv2/debug_image/compressed']
     robot_camera_topic: /camera/image_raw/compressed

@@ -85,6 +85,8 @@ class DashboardNode(Node):
         self.bridge = CvBridge()
         self.frames = {}          # 'cctv0', 'cctv1', 'robot' -> latest BGR frame
         self.frame_times = {}
+        self.frame_seq = {}       # per-key counter, drives the MJPEG streams
+        self.frame_cond = threading.Condition()
         self.map_msg_count = 0
         self.map_msg_time = 0.0
 
@@ -136,12 +138,19 @@ class DashboardNode(Node):
         self.create_subscription(String, '/compliance/event_metadata',
                                  self.metadata_callback, 10)
 
-        # Live camera views (CCTV debug images + robot onboard camera)
+        # Live camera views (CCTV debug images + robot onboard camera).
+        # '/compressed' topics carry JPEG (small + smooth at high fps).
         for i, topic in enumerate(self.get_parameter('cctv_image_topics').value):
-            self.create_subscription(
-                Image, topic,
-                lambda m, key=f'cctv{i}': self.image_callback(key, m),
-                qos_profile_sensor_data)
+            if topic.endswith('/compressed'):
+                self.create_subscription(
+                    CompressedImage, topic,
+                    lambda m, key=f'cctv{i}': self.compressed_image_callback(key, m),
+                    qos_profile_sensor_data)
+            else:
+                self.create_subscription(
+                    Image, topic,
+                    lambda m, key=f'cctv{i}': self.image_callback(key, m),
+                    qos_profile_sensor_data)
         # The robot camera crosses Wi-Fi: use the .../compressed topic there
         # (raw 640x480 frames are ~1MB each and don't survive campus Wi-Fi).
         robot_cam = self.get_parameter('robot_camera_topic').value
@@ -258,18 +267,22 @@ class DashboardNode(Node):
             frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
         except Exception:  # noqa: BLE001 - unsupported encoding
             return
-        with self.lock:
-            self.frames[key] = frame
-            self.frame_times[key] = time.monotonic()
+        self._store_frame(key, frame)
 
     def compressed_image_callback(self, key, msg):
         frame = cv2.imdecode(np.frombuffer(msg.data, np.uint8),
                              cv2.IMREAD_COLOR)
         if frame is None:
             return
+        self._store_frame(key, frame)
+
+    def _store_frame(self, key, frame):
         with self.lock:
             self.frames[key] = frame
             self.frame_times[key] = time.monotonic()
+            self.frame_seq[key] = self.frame_seq.get(key, 0) + 1
+        with self.frame_cond:
+            self.frame_cond.notify_all()   # wake the MJPEG streams
 
     def target_callback(self, msg):
         self.latest_target_xy = (round(msg.pose.position.x, 2),
@@ -587,6 +600,33 @@ class DashboardNode(Node):
         ok, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         return jpg.tobytes() if ok else None
 
+    def stream_camera(self, wfile, key):
+        """Pushes an MJPEG stream (multipart/x-mixed-replace): every new
+        frame is written the moment it arrives - smooth CCTV-style video
+        instead of the old snapshot polling. Runs in the request thread
+        until the browser disconnects."""
+        last_seq = -1
+        while True:
+            with self.frame_cond:
+                self.frame_cond.wait(timeout=2.0)
+            with self.lock:
+                seq = self.frame_seq.get(key, 0)
+                frame = self.frames.get(key)
+            if frame is None or seq == last_seq:
+                continue   # no new frame for THIS camera yet
+            last_seq = seq
+            ok, jpg = cv2.imencode('.jpg', frame,
+                                   [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if not ok:
+                continue
+            try:
+                wfile.write(b'--yoruframe\r\n'
+                            b'Content-Type: image/jpeg\r\n'
+                            b'Content-Length: ' + str(len(jpg)).encode()
+                            + b'\r\n\r\n' + jpg.tobytes() + b'\r\n')
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                return   # viewer closed the page/tab
+
     # ------------------------------------------------------------ HTTP server
 
     def make_handler(self):
@@ -632,6 +672,23 @@ class DashboardNode(Node):
                     return
                 if url.path == '/api/boot':
                     self.send_json(node.api_boot())
+                    return
+                if url.path == '/api/stream.mjpg':
+                    # <img> tags cannot send headers: token comes as ?t=
+                    qs = parse_qs(url.query)
+                    token = qs.get('t', [''])[0] or self.headers.get('X-Auth', '')
+                    if token not in node.tokens:
+                        self.send_json({'error': 'unauthorized'},
+                                       HTTPStatus.UNAUTHORIZED)
+                        return
+                    key = qs.get('src', ['cctv0'])[0]
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header('Content-Type',
+                                     'multipart/x-mixed-replace; '
+                                     'boundary=yoruframe')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.end_headers()
+                    node.stream_camera(self.wfile, key)
                     return
                 if not self.authed():
                     self.send_json({'error': 'unauthorized'}, HTTPStatus.UNAUTHORIZED)

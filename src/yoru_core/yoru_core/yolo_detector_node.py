@@ -17,10 +17,12 @@ use_coco_class_map: false once trained.
 """
 
 import json
+import threading
+import time
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 from std_msgs.msg import String
 from vision_msgs.msg import Detection2D, Detection2DArray, ObjectHypothesisWithPose
 
@@ -56,6 +58,11 @@ class YoloDetectorNode(Node):
         self.declare_parameter('extra_confidence_threshold', 0.35)
         self.declare_parameter('input_size', 640)
         self.declare_parameter('process_hz', 5.0)
+        # The debug/view image is published at view_hz (smooth CCTV-style
+        # video) with the latest detection boxes overlaid; YOLO itself only
+        # runs at process_hz. A capture thread drains the camera constantly
+        # so frames are always fresh (no OpenCV buffer lag).
+        self.declare_parameter('view_hz', 15.0)
         self.declare_parameter('publish_debug_image', True)
         self.declare_parameter('detections_topic', '/compliance/detections')
         self.declare_parameter('debug_image_topic', '/compliance/debug_image')
@@ -70,15 +77,25 @@ class YoloDetectorNode(Node):
         self.bridge = CvBridge()
         self.model = None
         self.capture = None
-        self.latest_frame = None
+        self.frame_lock = threading.Lock()
+        self.latest_frame = None      # (bgr image, header|None)
+        self.last_boxes = []          # [(class_id, conf, x1, y1, x2, y2, color)]
+        self.running = True
 
         det_topic = self.get_parameter('detections_topic').value
         self.det_pub = self.create_publisher(Detection2DArray, det_topic, 10)
         self.alert_pub = self.create_publisher(String, '/compliance/smoking_detected', 10)
         self.debug_pub = None
+        self.debug_comp_pub = None
+        self.view_count = 0
         if self.get_parameter('publish_debug_image').value:
-            self.debug_pub = self.create_publisher(
-                Image, self.get_parameter('debug_image_topic').value, 2)
+            debug_topic = self.get_parameter('debug_image_topic').value
+            # Raw frames (emailer evidence) go out at ~process_hz; the
+            # smooth high-rate view is JPEG-compressed (raw 640x480 at
+            # 15 fps is ~14 MB/s and gets dropped by the transport).
+            self.debug_pub = self.create_publisher(Image, debug_topic, 2)
+            self.debug_comp_pub = self.create_publisher(
+                CompressedImage, debug_topic + '/compressed', 2)
 
         self._load_model()
 
@@ -88,8 +105,12 @@ class YoloDetectorNode(Node):
             self.get_logger().info(f'Camera source: ROS topic {topic}')
         else:
             self._open_capture()
+            threading.Thread(target=self._capture_loop, daemon=True).start()
 
         self.create_timer(1.0 / max(process_hz, 0.5), self.process_frame)
+        if self.debug_pub is not None:
+            view_hz = self.get_parameter('view_hz').value
+            self.create_timer(1.0 / max(view_hz, 1.0), self.view_tick)
         self.get_logger().info(
             f'YOLO detector ready (model={self.get_parameter("model_path").value}, '
             f'source={self.source_type}, publishing {det_topic})')
@@ -130,28 +151,72 @@ class YoloDetectorNode(Node):
             self.get_logger().error(f'Unknown source_type: {self.source_type}')
             return
         self.capture = cv2.VideoCapture(src)
+        self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self.capture.isOpened():
             self.get_logger().error(f'Failed to open camera source: {src}')
 
-    def image_callback(self, msg):
-        self.latest_frame = (self.bridge.imgmsg_to_cv2(msg, 'bgr8'), msg.header)
-
-    def process_frame(self):
-        if self.model is None:
-            return
-        if self.source_type == 'ros_topic':
-            if self.latest_frame is None:
-                return
-            frame, header = self.latest_frame
-        else:
+    def _capture_loop(self):
+        """Continuously drains the camera so the newest frame is always
+        available - reading only at process_hz lets V4L/RTSP buffers queue
+        stale frames, which is what makes the view lag and stutter."""
+        video_pacing = 1.0 / 25.0 if self.source_type == 'video' else 0.0
+        while self.running:
             if self.capture is None or not self.capture.isOpened():
-                return
+                time.sleep(1.0)
+                continue
             ok, frame = self.capture.read()
             if not ok:
                 if self.source_type == 'video':  # loop test videos
                     self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                return
-            header = None
+                else:
+                    time.sleep(0.5)
+                continue
+            with self.frame_lock:
+                self.latest_frame = (frame, None)
+            if video_pacing:
+                time.sleep(video_pacing)
+
+    def image_callback(self, msg):
+        frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+        with self.frame_lock:
+            self.latest_frame = (frame, msg.header)
+
+    def view_tick(self):
+        """Publishes the smooth view: newest frame + latest boxes overlay.
+        JPEG-compressed at full view_hz; raw every 3rd frame (emailer)."""
+        with self.frame_lock:
+            snap = self.latest_frame
+            boxes = list(self.last_boxes)
+        if snap is None:
+            return
+        frame = snap[0].copy()
+        for class_id, conf, x1, y1, x2, y2, color in boxes:
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)),
+                          color, 2)
+            cv2.putText(frame, f'{class_id} {conf:.2f}',
+                        (int(x1), max(int(y1) - 5, 12)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+        ok, jpg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        if ok:
+            msg = CompressedImage()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.format = 'jpeg'
+            msg.data = jpg.tobytes()
+            self.debug_comp_pub.publish(msg)
+
+        self.view_count += 1
+        if self.view_count % 3 == 0:   # raw at ~view_hz/3 for the emailer
+            self.debug_pub.publish(self.bridge.cv2_to_imgmsg(frame, 'bgr8'))
+
+    def process_frame(self):
+        if self.model is None:
+            return
+        with self.frame_lock:
+            snap = self.latest_frame
+        if snap is None:
+            return
+        frame, header = snap[0].copy(), snap[1]
 
         array = Detection2DArray()
         if header is not None:
@@ -161,16 +226,19 @@ class YoloDetectorNode(Node):
             array.header.frame_id = 'camera'
 
         alert_classes = []
+        boxes = []
         # Main model (COCO map filters it to the project vocabulary)
         self._detect(self.model, frame, self.conf_threshold,
-                     self.use_coco_map, array, alert_classes, (0, 200, 0))
-        # Specialist model, e.g. the cigarette detector (classes as-is)
+                     self.use_coco_map, array, alert_classes, boxes, (0, 200, 0))
+        # Specialist model, e.g. the smoking/vape detector (classes as-is)
         if self.extra_model is not None:
             extra_conf = self.get_parameter('extra_confidence_threshold').value
             self._detect(self.extra_model, frame, extra_conf,
-                         False, array, alert_classes, (0, 0, 230))
+                         False, array, alert_classes, boxes, (0, 0, 230))
 
         self.det_pub.publish(array)
+        with self.frame_lock:
+            self.last_boxes = boxes   # view_tick overlays these
 
         if alert_classes:
             alert = String()
@@ -180,14 +248,11 @@ class YoloDetectorNode(Node):
             })
             self.alert_pub.publish(alert)
 
-        if self.debug_pub is not None:
-            self.debug_pub.publish(self.bridge.cv2_to_imgmsg(frame, 'bgr8'))
-
     def _detect(self, model, frame, conf, use_coco_map, array, alert_classes,
-                color):
+                boxes, color):
         """Runs one model on the frame, appending detections to the shared
-        array (and boxes to the debug frame) so both models' results arrive
-        in a single message for the confirmation node."""
+        array (and box overlays to the shared list) so both models' results
+        arrive in a single message for the confirmation node."""
         results = model.predict(
             frame, imgsz=self.input_size, conf=conf, verbose=False)
         names = results[0].names
@@ -214,13 +279,7 @@ class YoloDetectorNode(Node):
             array.detections.append(det)
             if class_id in ('cigarette', 'vape_device'):
                 alert_classes.append(class_id)
-
-            if self.debug_pub is not None:
-                cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)),
-                              color, 2)
-                cv2.putText(frame, f'{class_id} {float(box.conf[0]):.2f}',
-                            (int(x1), max(int(y1) - 5, 12)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            boxes.append((class_id, float(box.conf[0]), x1, y1, x2, y2, color))
 
 
 def main(args=None):
