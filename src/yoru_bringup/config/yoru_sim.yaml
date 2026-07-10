@@ -123,7 +123,9 @@ compliance_fsm_node:
     monitor_confirm_duration: 3.0
     pa_warning_duration: 10.0       # grace period after the PA announcement
     approach_timeout: 60.0
-    direct_warning_duration: 16.0   # > comply_delay + compliance_clear_duration
+    direct_warning_duration: 16.0    # safety cap (>= repeats*interval)
+    direct_warning_repeats: 3      # robot says the warning 3 times
+    direct_warning_interval: 4.0
     logging_duration: 2.0
     safe_stop_duration: 3.0
     compliance_clear_duration: 8.0

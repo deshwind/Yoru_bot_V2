@@ -118,7 +118,9 @@ compliance_fsm_node:
     monitor_confirm_duration: 5.0   # smoking must persist before the PA
     pa_warning_duration: 20.0       # grace period: stop now and nothing happens
     approach_timeout: 90.0
-    direct_warning_duration: 20.0
+    direct_warning_duration: 30.0    # safety cap (>= repeats*interval)
+    direct_warning_repeats: 3      # robot says the warning 3 times
+    direct_warning_interval: 8.0
     logging_duration: 2.0
     safe_stop_duration: 3.0
     compliance_clear_duration: 10.0

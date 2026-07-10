@@ -38,6 +38,10 @@ class ComplianceFsmNode(Node):
         self.declare_parameter('pa_warning_duration', 15.0)
         self.declare_parameter('approach_timeout', 60.0)
         self.declare_parameter('direct_warning_duration', 15.0)
+        # The robot repeats the direct warning this many times on arrival,
+        # spaced by the interval; the incident email goes out afterwards
+        self.declare_parameter('direct_warning_repeats', 3)
+        self.declare_parameter('direct_warning_interval', 8.0)
         self.declare_parameter('logging_duration', 2.0)
         self.declare_parameter('safe_stop_duration', 3.0)
         self.declare_parameter('compliance_clear_duration', 10.0)
@@ -61,6 +65,8 @@ class ComplianceFsmNode(Node):
         self.nav_result = None
         self.stage_reached = 'S0'
         self.autonomy_paused = False
+        self.direct_count = 0
+        self.last_direct_time = 0.0
 
         self.status_pub = self.create_publisher(String, '/compliance/fsm_status', 10)
         self.pa_pub = self.create_publisher(String, '/compliance/pa_warning', 10)
@@ -186,7 +192,22 @@ class ComplianceFsmNode(Node):
         self.target_class = None
         self.nav_result = None
         self.stage_reached = 'S0'
+        self.direct_count = 0
         self.transition('MONITORING')
+
+    def send_direct_warning(self):
+        meta = self.track_metadata.get(self.target_track, {})
+        direct = String()
+        direct.data = json.dumps({'message': self.param('direct_message'),
+                                  'track_id': self.target_track,
+                                  'room': meta.get('room', ''),
+                                  'event_class': self.target_class})
+        self.direct_pub.publish(direct)
+        self.direct_count += 1
+        self.last_direct_time = time.monotonic()
+        self.get_logger().info(
+            f'Direct warning {self.direct_count}/'
+            f'{int(self.param("direct_warning_repeats"))}')
 
     # -------------------------------------------------------------------- tick
 
@@ -217,7 +238,18 @@ class ComplianceFsmNode(Node):
         elif self.state == 'APPROACH':
             self.approach_tick()
         elif self.state == 'DIRECT_WARNING':
-            if self.elapsed() >= self.param('direct_warning_duration'):
+            # Repeat the warning N times, then log + email the evidence.
+            # direct_warning_duration remains as an overall safety cap.
+            interval_over = (time.monotonic() - self.last_direct_time
+                             >= self.param('direct_warning_interval'))
+            if interval_over:
+                if self.direct_count < int(self.param('direct_warning_repeats')):
+                    self.send_direct_warning()
+                else:
+                    self.stage_reached = 'S4'
+                    self.transition('LOGGING')
+            if self.state == 'DIRECT_WARNING' and \
+                    self.elapsed() >= self.param('direct_warning_duration'):
                 self.stage_reached = 'S4'
                 self.transition('LOGGING')
         elif self.state == 'LOGGING':
@@ -277,13 +309,8 @@ class ComplianceFsmNode(Node):
         if self.nav_result == 'succeeded':
             self.nav_result = None
             self.stage_reached = 'S3'
-            meta = self.track_metadata.get(self.target_track, {})
-            direct = String()
-            direct.data = json.dumps({'message': self.param('direct_message'),
-                                      'track_id': self.target_track,
-                                      'room': meta.get('room', ''),
-                                      'event_class': self.target_class})
-            self.direct_pub.publish(direct)
+            self.direct_count = 0
+            self.send_direct_warning()   # warning 1 of N; the rest follow
             self.transition('DIRECT_WARNING')
             return
         if self.nav_result in ('aborted', 'timeout', 'rejected', 'nav2_unavailable'):
