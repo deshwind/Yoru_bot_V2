@@ -40,3 +40,11 @@ echo "    bluetoothctl -> scan on -> hold SHARE+PS -> pair/trust/connect <MAC>"
 echo ""
 echo ">>> Done. Log out and back in (group changes), then from the PC run:"
 echo "    ./deploy_to_pi.sh <this-pi-ip> $USER"
+
+echo ">>> Piper neural TTS (natural announcement voice) ..."
+pip3 install --user piper-tts
+mkdir -p ~/Yoru_bot_V2/voices
+for f in en_GB-alba-medium.onnx en_GB-alba-medium.onnx.json; do
+    [ -f ~/Yoru_bot_V2/voices/"$f" ] || curl -sL -o ~/Yoru_bot_V2/voices/"$f" \
+        "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_GB/alba/medium/$f"
+done

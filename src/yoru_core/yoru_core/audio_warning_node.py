@@ -2,13 +2,16 @@
 
 Speaks the robot's warnings. Backend chain (first available wins):
 
-  1. espeak-ng  - offline runtime TTS, speaks the actual message text
-                  (including dynamic parts like the room name).
+  1. piper      - neural TTS, natural voice, fully offline, speaks the
+                  actual message text (including the camera/room name).
+                  pip install piper-tts + a voice model in voices/
+                  (see 'piper_model' parameter).
+  2. espeak-ng  - offline formant TTS (robotic but dynamic).
                   Install with: sudo apt install espeak-ng
-  2. audio file - pre-generated speech in the package audio/ folder:
+  3. audio file - pre-generated speech in the package audio/ folder:
                   {kind}.mp3 via gst-play-1.0, or {kind}.wav via aplay.
-                  Generate natural voices with tools/generate_audio_wavs.py (gTTS).
-  3. log only   - warning text is logged (always happens regardless).
+                  Generate with tools/generate_audio_wavs.py (gTTS).
+  4. log only   - warning text is logged (always happens regardless).
 """
 
 import json
@@ -37,6 +40,9 @@ class AudioWarningNode(Node):
         self.declare_parameter('use_audio', True)
         self.declare_parameter('audio_dir', default_dir)
         self.declare_parameter('aplay_device', 'default')
+        # Piper neural voice (natural). Model + .onnx.json expected together.
+        self.declare_parameter('piper_model', os.path.expanduser(
+            '~/Yoru_bot_V2/voices/en_GB-alba-medium.onnx'))
         self.declare_parameter('espeak_speed', 140)
         self.declare_parameter('espeak_amplitude', 200)
         self.declare_parameter('espeak_voice', 'en')
@@ -47,6 +53,12 @@ class AudioWarningNode(Node):
 
         self.espeak = shutil.which('espeak-ng') or shutil.which('espeak')
         self.gst_play = shutil.which('gst-play-1.0')
+        piper_exe = shutil.which('piper') or os.path.expanduser('~/.local/bin/piper')
+        piper_model = os.path.expanduser(self.get_parameter('piper_model').value)
+        self.piper = None
+        if os.path.isfile(piper_exe) and os.path.isfile(piper_model) \
+                and os.path.isfile(piper_model + '.json'):
+            self.piper = (piper_exe, piper_model)
         self.proc = None  # current playback process; new warning preempts
 
         if self.get_parameter('speak_pa').value:
@@ -58,10 +70,14 @@ class AudioWarningNode(Node):
 
         if not self.get_parameter('use_audio').value:
             backend = 'log-only (use_audio: false)'
+        elif self.piper:
+            backend = f'piper neural TTS ({os.path.basename(self.piper[1])})'
         elif self.espeak:
-            backend = f'espeak TTS ({self.espeak})'
+            backend = f'espeak TTS ({self.espeak}) - install piper-tts ' \
+                      '+ a voice model for a natural voice'
         else:
-            backend = 'audio files (install espeak-ng for dynamic speech)'
+            backend = 'audio files (install piper-tts or espeak-ng for ' \
+                      'dynamic speech)'
         self.get_logger().info(f'Audio warning node ready - backend: {backend}')
 
     def play(self, kind, msg):
@@ -77,6 +93,20 @@ class AudioWarningNode(Node):
         # Stop any still-running announcement before starting a new one
         if self.proc is not None and self.proc.poll() is None:
             self.proc.terminate()
+
+        if self.piper:
+            exe, model = self.piper
+            stem = f'/tmp/yoru_tts_{os.getpid()}'
+            with open(stem + '.txt', 'w', encoding='utf-8') as f:
+                f.write(text)
+            player = (f'"{self.gst_play}" -q' if self.gst_play
+                      else 'aplay -q -D '
+                           + self.get_parameter('aplay_device').value)
+            self._run(['bash', '-c',
+                       f'"{exe}" -m "{model}" -c "{model}.json" '
+                       f'-i {stem}.txt -f {stem}.wav 2>/dev/null '
+                       f'&& exec {player} {stem}.wav'])
+            return
 
         if self.espeak:
             self._run([self.espeak,

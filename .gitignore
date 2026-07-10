@@ -27,3 +27,6 @@ compliance_robot_logs/
 # training artifacts
 datasets/
 runs/
+
+# TTS voice models (downloaded by setup, ~60MB)
+voices/
