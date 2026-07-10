@@ -42,3 +42,24 @@ Reproduction: the merge script logic and exact class mapping are recorded
 in docs/DEVLOG.md (session 5); the raw downloads are not committed
 (`datasets/` is git-ignored) but can be re-fetched with a free Roboflow
 API key using the links above.
+
+## Label-quality audit (manual)
+
+36 randomly sampled annotated images (12 per audit sheet: cigarette, vape,
+tiara vape/smoke) were rendered with their bounding boxes and inspected
+manually on 2026-07-09: 34/36 boxes clearly correct, 2 tiny/ambiguous,
+0 clearly mislabeled. Content is deployment-relevant: smoking/vaping at
+the mouth, devices in hand, multiple vape form factors (pen, pod, box mod,
+disposable, heat-not-burn), exhaled clouds, and some camera-distance shots.
+
+## Trained model results (YOLOv8n, 49 epochs, RTX 3050 Ti)
+
+| Split | mAP50 overall | cigarette | vape_device | smoke_vapour |
+|---|---|---|---|---|
+| test (held out) | 0.832 | 0.821 | 0.843 | — (no test boxes) |
+| valid | 0.726 | 0.839 | 0.916 | 0.423 |
+
+Notes: the test split contains no `smoke_vapour` instances, so that class
+is evaluated on the validation split only. `smoke_vapour` is used solely
+as C5 supporting evidence (weight 0.3) in the event-confirmation gate and
+can never trigger an escalation by itself. Inference: ~4.5 ms/frame (GPU).

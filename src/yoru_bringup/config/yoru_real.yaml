@@ -20,9 +20,10 @@ yolo_cctv1:
     model_path: yolov8n.pt          # persons (auto-downloads; swap in the
     use_coco_class_map: true        # trained 6-class model + false later)
     confidence_threshold: 0.4
-    # Specialist cigarette detector, run on the same frame and merged
-    # (from ~/src3/models - copy expected at the workspace root)
-    extra_model_path: /home/desh/Yoru_bot_V2/cigarette_yolov8.pt
+    # Specialist smoking/vape detector (cigarette, vape_device, smoke_vapour)
+    # trained on Roboflow datasets - see docs/DATASETS.md; runs on the same
+    # frame as the person model and the detections merge
+    extra_model_path: /home/desh/Yoru_bot_V2/smoking_vape_yolov8.pt
     extra_confidence_threshold: 0.35
     input_size: 640
     process_hz: 5.0
@@ -67,7 +68,7 @@ yolo_cctv2:
     model_path: yolov8n.pt
     use_coco_class_map: true
     confidence_threshold: 0.4
-    extra_model_path: /home/desh/Yoru_bot_V2/cigarette_yolov8.pt
+    extra_model_path: /home/desh/Yoru_bot_V2/smoking_vape_yolov8.pt
     extra_confidence_threshold: 0.35
     input_size: 640
     process_hz: 5.0

@@ -1,5 +1,22 @@
 # Yoru V2 — Development Log
 
+## Session 5 — 2026-07-09 (vape-aware specialist model trained + deployed)
+
+- **Dataset** (user required Roboflow, rejected Kaggle): three CC BY 4.0
+  Roboflow Universe sets merged into `datasets/smoking_vape_v1` — 18,905
+  train images, classes cigarette/vape_device/smoke_vapour (tiara's "asap"
+  class = Indonesian for smoke → smoke_vapour). Full citations, remapping,
+  manual label audit (34/36 correct) and metrics in docs/DATASETS.md.
+- **Training**: YOLOv8n, 49 epochs on the RTX 3050 Ti (paused/resumed once
+  at user request). Test mAP50 0.832 (cigarette 0.821, vape_device 0.843);
+  valid vape_device 0.916. ~4.5 ms/frame GPU inference.
+- **Deployed**: best.pt → `smoking_vape_yolov8.pt` as `extra_model_path`
+  for both CCTV pipelines, replacing the single-class cigarette model.
+  Vape at mouth is now a real escalating detection (device class
+  `vape_device` in C2); interim "possible vape" hint retained as fallback.
+- Weights are git-ignored (`*.pt`); regenerate by re-running training or
+  copy from `runs/smoking_vape_v1/weights/best.pt`.
+
 ## Session 4 — 2026-07-09 (vape problem, GPU repair, interim soft alert)
 
 ### The vape problem
