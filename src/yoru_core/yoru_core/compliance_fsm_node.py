@@ -47,6 +47,7 @@ class ComplianceFsmNode(Node):
         self.declare_parameter('compliance_clear_duration', 10.0)
         self.declare_parameter('cooldown_duration', 60.0)
         self.declare_parameter('obstacle_stop_distance', 0.35)
+        self.declare_parameter('scan_ignore_radius', 0.2)
         self.declare_parameter('target_lost_timeout', 5.0)
         # One confirmed-events topic per CCTV pipeline
         self.declare_parameter('events_topics', ['/compliance/confirmed_events'])
@@ -129,8 +130,13 @@ class ComplianceFsmNode(Node):
             return
 
     def scan_callback(self, msg):
+        # Returns inside scan_ignore_radius are the robot seeing its own
+        # frame/mast (measured ~0.18 m on Yoru) - without this filter the
+        # obstacle e-stop trips the moment APPROACH starts. Real obstacle
+        # avoidance is Nav2's costmaps; this check is only the e-stop.
+        ignore = self.param('scan_ignore_radius')
         valid = [r for r in msg.ranges
-                 if msg.range_min < r < msg.range_max]
+                 if msg.range_min < r < msg.range_max and r > ignore]
         self.min_scan_range = min(valid) if valid else float('inf')
 
     def paused_callback(self, msg):

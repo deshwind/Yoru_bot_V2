@@ -128,6 +128,8 @@ compliance_fsm_node:
     compliance_clear_duration: 10.0
     cooldown_duration: 60.0
     obstacle_stop_distance: 0.35
+    scan_ignore_radius: 0.2         # lidar sees the robot's own frame at
+                                    # ~0.18m; ignore self-hits in the e-stop
     target_lost_timeout: 8.0
 
 # Laptop speakers: PA announcement only (the robot says the direct warning)
