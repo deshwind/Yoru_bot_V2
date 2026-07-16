@@ -133,6 +133,13 @@ def generate_launch_description():
         name='robot_audio_node',
         parameters=[params_file], output='screen')
 
+    # Dashboard "Reset map" -> delete the Pi's map + relaunch into mapping
+    map_reset = Node(
+        package='yoru_core', executable='map_reset_node',
+        parameters=[{'maps_dir': os.path.dirname(DEFAULT_MAP),
+                     'map_name': 'main_map'}],
+        output='screen')
+
     slam_or_amcl = OpaqueFunction(function=resolve_mode)
 
     nav2 = IncludeLaunchDescription(
@@ -150,6 +157,7 @@ def generate_launch_description():
         camera_usb,
         twist_mux,
         audio,
+        map_reset,
         slam_or_amcl,
         TimerAction(period=6.0, actions=[nav2]),
     ])

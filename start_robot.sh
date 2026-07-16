@@ -29,4 +29,15 @@ if [ ! -f install/setup.bash ]; then
 fi
 source install/setup.bash
 
-exec ros2 launch yoru_bringup real_robot.launch.py "$@"
+# The dashboard's "Reset map" button makes map_reset_node delete the map,
+# touch the flag and stop the launch - then we relaunch, and mode:=auto
+# resolves to mapping because the map is gone.
+while true; do
+    ros2 launch yoru_bringup real_robot.launch.py "$@"
+    if [ -f /tmp/yoru_remap_restart ]; then
+        rm -f /tmp/yoru_remap_restart
+        echo "[yoru] map reset - relaunching (no map -> mapping mode)"
+        continue
+    fi
+    break
+done

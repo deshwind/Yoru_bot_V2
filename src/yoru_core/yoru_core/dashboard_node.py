@@ -19,6 +19,7 @@ V2 additions over the V1 console:
 Auth: admin password -> session token held in server memory.
 """
 
+import glob
 import hashlib
 import json
 import os
@@ -94,6 +95,7 @@ class DashboardNode(Node):
         self.home_pub = self.create_publisher(Bool, '/compliance/return_to_base', 10)
         # Test-announcement button: exercises the real PA path end-to-end
         self.pa_pub = self.create_publisher(String, '/compliance/pa_warning', 10)
+        self.map_reset_pub = self.create_publisher(String, '/compliance/map_reset', 10)
         # cmd_vel_tracker: twist_mux priority 20 (above Nav2, below joystick)
         self.drive_pub = self.create_publisher(Twist, 'cmd_vel_tracker', 10)
         # Relocalisation: consumed by AMCL / slam_toolbox localization mode
@@ -533,6 +535,32 @@ class DashboardNode(Node):
             return {'error': 'map_saver failed: ' + ' | '.join(tail)}
         return {'ok': True, 'path': stem + '.yaml'}
 
+    def api_reset_map(self):
+        """Deletes the saved map here AND on the robot, then the robot
+        relaunches itself into mapping mode (map_reset_node + the
+        start_robot.sh relaunch loop). Camera spots are cleared too - a
+        new area means new spots."""
+        name = self.get_parameter('map_name').value
+        removed = []
+        for path in glob.glob(os.path.join(self.maps_dir, name + '.*')) + \
+                glob.glob(os.path.join(self.maps_dir, name + '_serial.*')):
+            try:
+                os.remove(path)
+                removed.append(os.path.basename(path))
+            except OSError as exc:
+                return {'error': f'could not remove {path}: {exc}'}
+        tmp = self.cameras_file + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump([], f)
+        os.replace(tmp, self.cameras_file)
+        reset = String()
+        reset.data = 'reset'
+        self.map_reset_pub.publish(reset)
+        self.get_logger().warn(
+            f'DASHBOARD: map reset (removed {removed if removed else "no local files"}); '
+            'robot restarting into mapping mode')
+        return {'ok': True, 'removed': removed}
+
     def api_cameras_get(self):
         return {'cameras': self.load_cameras()}
 
@@ -757,6 +785,8 @@ class DashboardNode(Node):
                     self.send_json(node.api_clear_costmaps())
                 elif self.path == '/api/save_map':
                     self.send_json(node.api_save_map())
+                elif self.path == '/api/reset_map':
+                    self.send_json(node.api_reset_map())
                 elif self.path == '/api/cameras':
                     self.send_json(node.api_cameras_set(body))
                 elif self.path == '/api/change_password':

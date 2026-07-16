@@ -414,6 +414,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
             Watch the map grow below, then press Save Map.</p>
           <div class="btnrow">
             <button class="success" onclick="saveMap()">&#128190;&nbsp; Save Map</button>
+            <button class="danger" onclick="resetMap()">&#128465;&nbsp; Reset Map (new area)</button>
           </div>
         </div>
       </div>
@@ -890,6 +891,22 @@ async function saveMap() {
   const r = await api('/api/save_map', {});
   if (r.ok) { toast('Map saved ✓  (' + r.path + ')'); boot.has_saved_map = true; }
   else toast(r.error || 'Map save failed');
+  updateChecklist();
+}
+
+async function resetMap() {
+  if (!confirm('Delete the saved map AND all camera spots, and restart ' +
+               'the robot into mapping mode? You will need to drive and ' +
+               'map the new area, save it, and mark the camera spots again.'))
+    return;
+  toast('Resetting map…');
+  const r = await api('/api/reset_map', {});
+  if (r.ok) {
+    toast('Map reset ✓ — robot is restarting into mapping mode (~1 min)');
+    boot.has_saved_map = false;
+    cameras = [];
+    renderCamList();
+  } else toast(r.error || 'Map reset failed');
   updateChecklist();
 }
 
