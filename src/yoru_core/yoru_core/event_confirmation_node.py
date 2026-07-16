@@ -137,11 +137,14 @@ class EventConfirmationNode(Node):
             c2 = best_device is not None
             c3 = best_prox > 0.0
 
-            # C4 / C6: persistence on the same track ID
+            # C4 / C6: persistence on the same track ID. A missed frame
+            # (hand motion blur, brief occlusion) decays the count instead
+            # of zeroing it, so natural movement doesn't restart C4.
             if c1 and c2 and c3:
                 self.persistence[track_id] = self.persistence.get(track_id, 0) + 1
             else:
-                self.persistence[track_id] = 0
+                self.persistence[track_id] = max(
+                    0, self.persistence.get(track_id, 0) - 1)
             frames = self.persistence[track_id]
             c4 = frames >= self.persistence_required
             persistence_score = min(frames / float(self.persistence_required), 1.0)

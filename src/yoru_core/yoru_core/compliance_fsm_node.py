@@ -60,6 +60,11 @@ class ComplianceFsmNode(Node):
         self.track_first_seen = {}
         self.track_last_seen = {}
         self.track_metadata = {}
+        # Camera-level continuity: the tracker reassigns IDs when a person
+        # or device moves, but a confirmed violation from the same camera
+        # is treated as the same ongoing event (one room, one violator).
+        self.room_first_seen = {}
+        self.room_last_seen = {}
         self.cooldowns = {}
         self.min_scan_range = float('inf')
         self.nav_result = None
@@ -108,6 +113,14 @@ class ComplianceFsmNode(Node):
             return
         if meta.get('status') == 'confirmed':
             self.track_metadata[meta.get('track_id')] = meta
+            room = meta.get('room')
+            if room:
+                now = time.monotonic()
+                quiet = self.param('compliance_clear_duration')
+                if room not in self.room_last_seen or \
+                        now - self.room_last_seen[room] > quiet:
+                    self.room_first_seen[room] = now  # fresh violation
+                self.room_last_seen[room] = now
 
     def nav_status_callback(self, msg):
         try:
@@ -154,18 +167,28 @@ class ComplianceFsmNode(Node):
         })
         self.status_pub.publish(msg)
 
+    def _target_last_seen(self):
+        """Freshest evidence for the target: its own track, or any confirmed
+        event from the same camera (ID churn = same ongoing violation)."""
+        candidates = [self.track_last_seen.get(self.target_track)]
+        room = self.track_metadata.get(self.target_track, {}).get('room')
+        if room:
+            candidates.append(self.room_last_seen.get(room))
+        candidates = [c for c in candidates if c is not None]
+        return max(candidates) if candidates else None
+
     def target_active(self):
-        """Violation still ongoing for the current target track."""
+        """Violation still ongoing for the current target (or its camera)."""
         if self.target_track is None:
             return False
-        last = self.track_last_seen.get(self.target_track)
+        last = self._target_last_seen()
         return last is not None and \
             time.monotonic() - last < self.param('compliance_clear_duration')
 
     def target_lost(self):
         if self.target_track is None:
             return True
-        last = self.track_last_seen.get(self.target_track)
+        last = self._target_last_seen()
         return last is None or \
             time.monotonic() - last > self.param('target_lost_timeout')
 
@@ -276,6 +299,14 @@ class ComplianceFsmNode(Node):
                 continue
             if track in self.cooldowns and now - self.cooldowns[track] < cooldown:
                 continue
+            # Same-camera continuity: a reassigned track ID (person or vape
+            # moved) inherits the room's ongoing violation start time, so
+            # the confirm window doesn't restart on every ID churn.
+            room = self.track_metadata.get(track, {}).get('room')
+            if room and room in self.room_first_seen and \
+                    now - self.room_last_seen.get(room, 0.0) <= \
+                    self.param('compliance_clear_duration'):
+                first = min(first, self.room_first_seen[room])
             if now - first >= confirm:
                 self.target_track = track
                 meta = self.track_metadata.get(track, {})
