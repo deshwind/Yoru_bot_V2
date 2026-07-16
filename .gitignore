@@ -30,3 +30,6 @@ runs/
 
 # TTS voice models (downloaded by setup, ~60MB)
 voices/
+
+# camera spots are deployment data (dashboard writes them)
+maps/cameras.json
