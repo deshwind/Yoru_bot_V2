@@ -129,7 +129,10 @@ class ArduinoDriverNode(Node):
         try:
             left_ticks, right_ticks = (int(v) for v in reply.split())
         except ValueError:
-            self.get_logger().warn(f'Bad encoder reply: {reply!r}')
+            # A timed-out read shifts every later reply by one command;
+            # flush the buffer so the next cycle starts back in sync.
+            self.get_logger().warn(f'Bad encoder reply: {reply!r}; resyncing')
+            self.serial.reset_input_buffer()
             return
 
         d_left = (left_ticks - self.prev_left_ticks) / counts_per_meter
