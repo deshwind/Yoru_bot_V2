@@ -48,6 +48,10 @@ class ComplianceFsmNode(Node):
         self.declare_parameter('cooldown_duration', 60.0)
         self.declare_parameter('obstacle_stop_distance', 0.35)
         self.declare_parameter('scan_ignore_radius', 0.2)
+        # A single close reading (rotation grazing the robot's own mast/
+        # camera mount for one frame) must not kill the whole approach;
+        # require the obstacle to persist this long before stopping.
+        self.declare_parameter('obstacle_debounce_duration', 0.4)
         self.declare_parameter('target_lost_timeout', 5.0)
         # One confirmed-events topic per CCTV pipeline
         self.declare_parameter('events_topics', ['/compliance/confirmed_events'])
@@ -67,6 +71,7 @@ class ComplianceFsmNode(Node):
         self.room_first_seen = {}
         self.room_last_seen = {}
         self.cooldowns = {}
+        self.obstacle_since = None
         self.min_scan_range = float('inf')
         self.nav_result = None
         self.stage_reached = 'S0'
@@ -263,6 +268,7 @@ class ComplianceFsmNode(Node):
         elif self.state == 'PA_WARNING':
             if self.elapsed() >= self.param('pa_warning_duration'):
                 self.stage_reached = 'S2'
+                self.obstacle_since = None
                 self.transition('APPROACH')
         elif self.state == 'APPROACH':
             self.approach_tick()
@@ -334,11 +340,19 @@ class ComplianceFsmNode(Node):
 
     def approach_tick(self):
         if self.min_scan_range < self.param('obstacle_stop_distance'):
-            self.get_logger().warn(
-                f'Obstacle at {self.min_scan_range:.2f} m: SAFE_STOP')
-            self.estop_pub.publish(Twist())
-            self.transition('SAFE_STOP')
-            return
+            now = time.monotonic()
+            if self.obstacle_since is None:
+                self.obstacle_since = now
+            elif now - self.obstacle_since >= \
+                    self.param('obstacle_debounce_duration'):
+                self.get_logger().warn(
+                    f'Obstacle at {self.min_scan_range:.2f} m '
+                    f'(persisted {now - self.obstacle_since:.1f}s): SAFE_STOP')
+                self.estop_pub.publish(Twist())
+                self.transition('SAFE_STOP')
+                return
+        else:
+            self.obstacle_since = None
         if self.target_lost():
             self.get_logger().info('Target lost during approach')
             self.finish_escalation('target_lost')

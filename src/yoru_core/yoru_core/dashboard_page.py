@@ -213,22 +213,22 @@ PAGE_HTML = r"""<!DOCTYPE html>
     pointer-events:none; z-index:60; max-width:90vw; text-align:center; }
   #toast.show { opacity:1; }
 
-  /* Camera spot modal */
-  #cammodal { position:fixed; inset:0; z-index:70; display:none;
+  /* Camera / base spot modals */
+  #cammodal, #basemodal { position:fixed; inset:0; z-index:70; display:none;
               align-items:center; justify-content:center;
               background:rgba(0,0,0,.35); }
-  #cammodal.show { display:flex; }
-  #cammodal .card { width:min(360px, 92vw); padding:24px; }
-  #cammodal h3 { font-size:17px; font-weight:700; margin-bottom:14px; }
-  #cammodal label { font-size:12px; color:var(--dim); font-weight:600;
+  #cammodal.show, #basemodal.show { display:flex; }
+  #cammodal .card, #basemodal .card { width:min(360px, 92vw); padding:24px; }
+  #cammodal h3, #basemodal h3 { font-size:17px; font-weight:700; margin-bottom:14px; }
+  #cammodal label, #basemodal label { font-size:12px; color:var(--dim); font-weight:600;
                     display:block; margin:10px 0 4px; }
-  #cammodal input, #cammodal select {
+  #cammodal input, #cammodal select, #basemodal input {
     width:100%; padding:12px 14px; font-size:15px; font-family:inherit;
     color:var(--txt); background:var(--glass2);
     border:1px solid var(--stroke); border-radius:14px; outline:none;
   }
-  #cammodal .btns { display:flex; gap:10px; margin-top:18px; }
-  #cammodal .btns button { flex:1; }
+  #cammodal .btns, #basemodal .btns { display:flex; gap:10px; margin-top:18px; }
+  #cammodal .btns button, #basemodal .btns button { flex:1; }
 
   .camlist { margin-top:12px; }
   .camrow { display:flex; align-items:center; gap:10px; padding:10px 4px;
@@ -430,12 +430,18 @@ PAGE_HTML = r"""<!DOCTYPE html>
         <div class="maptools">
           <button id="addCamBtn" class="warn" onclick="toggleAddCam()">
             &#128247;&nbsp; Add camera spot</button>
+          <button id="addBaseBtn" class="warn" onclick="toggleAddBase()">
+            &#8962;&nbsp; Mark base spot</button>
         </div>
         <div class="camlist" id="camlist"></div>
         <p class="note">Mark the spot the robot should drive to when each CCTV
           camera reports smoking &mdash; a point about 1&ndash;2 m in front of where
           people would stand, facing them. Spots apply immediately, no restart
           needed.</p>
+        <div class="camlist" id="baselist"></div>
+        <p class="note">Mark where the robot should park when Return to Base
+          is pressed (or the battery gets low). Applies immediately, no
+          restart needed.</p>
       </div>
     </div>
 
@@ -586,6 +592,19 @@ PAGE_HTML = r"""<!DOCTYPE html>
   </div>
 </div>
 
+<!-- Base spot naming modal -->
+<div id="basemodal">
+  <div class="card glass">
+    <h3>&#8962; New base spot</h3>
+    <label>Name</label>
+    <input id="baseName" placeholder="e.g. Charging dock">
+    <div class="btns">
+      <button onclick="closeBaseModal()">Cancel</button>
+      <button class="primary" onclick="saveBaseSpot()">Save spot</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -593,6 +612,7 @@ let token = localStorage.getItem('yorutoken') || '';
 let incidents = [];
 let boot = { needs_setup: false, has_saved_map: false, mapping_active: false };
 let cameras = [];
+let bases = [];
 let lastStatus = null;
 
 function inApp() {
@@ -673,7 +693,7 @@ async function login(pwArg) {
 }
 
 function enterApp(firstRun) {
-  refresh(); loadIncidents(); loadCameras();
+  refresh(); loadIncidents(); loadCameras(); loadBases();
   // Fresh install or no saved map yet -> take the admin to the Setup screen
   if (firstRun || (!boot.has_saved_map)) go('setup');
 }
@@ -906,6 +926,8 @@ async function resetMap() {
     boot.has_saved_map = false;
     cameras = [];
     renderCamList();
+    bases = [];
+    renderBaseList();
   } else toast(r.error || 'Map reset failed');
   updateChecklist();
 }
@@ -938,6 +960,66 @@ async function deleteCam(i) {
   cameras.splice(i, 1);
   await pushCameras();
   toast('Camera spot deleted');
+}
+
+/* ------------- base spot(s) ------------- */
+async function loadBases() {
+  try {
+    bases = (await api('/api/bases')).bases || [];
+    renderBaseList();
+  } catch (e) { /* logged out */ }
+}
+function renderBaseList() {
+  const el = document.getElementById('baselist');
+  el.innerHTML = bases.map((b, i) =>
+    `<div class="camrow"><span class="ic">&#8962;</span>
+       <span class="nm">${b.name}</span>
+       <span class="xy">x ${b.x} · y ${b.y}</span>
+       <button onclick="deleteBase(${i})">Delete</button></div>`).join('')
+    || '<div class="note">No base spot marked yet.</div>';
+}
+async function pushBases() {
+  const r = await api('/api/bases', { bases });
+  if (r.ok) { bases = r.bases; renderBaseList(); draw(); }
+  else toast(r.error || 'Save failed');
+}
+async function deleteBase(i) {
+  const b = bases[i];
+  if (!confirm(`Delete base spot "${b.name}"?`)) return;
+  bases.splice(i, 1);
+  await pushBases();
+  toast('Base spot deleted');
+}
+
+let pendingBaseSpot = null;
+function toggleAddBase(forceOff) {
+  armMode = (forceOff || armMode === 'addbase') ? null : 'addbase';
+  armStart = armDrag = null;
+  document.getElementById('addBaseBtn').classList.toggle('on', armMode === 'addbase');
+  document.getElementById('hint-setup').classList.toggle('hidden',
+                                                          armMode !== 'addbase');
+  draw();
+}
+function openBaseModal(spot) {
+  pendingBaseSpot = spot;
+  document.getElementById('baseName').value =
+    bases.length ? 'Base ' + (bases.length + 1) : 'Base';
+  document.getElementById('basemodal').classList.add('show');
+}
+function closeBaseModal() {
+  document.getElementById('basemodal').classList.remove('show');
+  pendingBaseSpot = null;
+}
+async function saveBaseSpot() {
+  if (!pendingBaseSpot) return;
+  const name = document.getElementById('baseName').value || 'Base';
+  const id = 'base' + (bases.length + 1) + '_' + Date.now();
+  bases.push({ id, name, x: +pendingBaseSpot.x.toFixed(3),
+               y: +pendingBaseSpot.y.toFixed(3),
+               yaw: +pendingBaseSpot.yaw.toFixed(3) });
+  closeBaseModal();
+  await pushBases();
+  toast(`Saved base spot "${name}"`);
 }
 
 let pendingSpot = null;
@@ -1077,6 +1159,22 @@ function draw() {
     ctx.fillText(c.name, cx, cy - 10);
   }
 
+  // base spot(s) (green, with facing tick + label)
+  for (const b of bases) {
+    const [bx, by] = worldToCanvas(canvas, b.x, b.y);
+    ctx.strokeStyle = 'rgba(48,209,88,.95)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(bx, by);
+    ctx.lineTo(bx + 14 * Math.cos(-b.yaw), by + 14 * Math.sin(-b.yaw));
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(48,209,88,.95)';
+    ctx.beginPath(); ctx.arc(bx, by, 6, 0, 7); ctx.fill();
+    ctx.font = 'bold 11px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(b.name, bx, by - 10);
+  }
+
   if (mapInfo.target) {
     const [tx, ty] = worldToCanvas(canvas, mapInfo.target[0], mapInfo.target[1]);
     ctx.fillStyle = 'rgba(255,69,58,.9)';
@@ -1088,8 +1186,9 @@ function draw() {
   }
   if (armStart && armDrag) {
     const ang = Math.atan2(armDrag[1] - armStart[1], armDrag[0] - armStart[0]);
-    drawArrow(ctx, armStart[0], armStart[1], ang,
-              armMode === 'addcam' ? '#af52de' : '#ff9f0a');
+    const color = armMode === 'addcam' ? '#af52de'
+                 : armMode === 'addbase' ? '#30d158' : '#ff9f0a';
+    drawArrow(ctx, armStart[0], armStart[1], ang, color);
   }
 }
 
@@ -1144,6 +1243,9 @@ for (const cid of ['canvas-map', 'canvas-setup']) {
       toggleReloc(true);
       const r = await api('/api/relocalise', { x: wx, y: wy, yaw: yaw });
       toast(r.note || `Relocalised to (${wx.toFixed(2)}, ${wy.toFixed(2)})`);
+    } else if (mode === 'addbase') {
+      toggleAddBase(true);
+      openBaseModal({ x: wx, y: wy, yaw: yaw });
     } else {
       toggleAddCam(true);
       openCamModal({ x: wx, y: wy, yaw: yaw });

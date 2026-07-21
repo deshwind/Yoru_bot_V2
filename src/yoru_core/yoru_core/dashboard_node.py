@@ -73,6 +73,7 @@ class DashboardNode(Node):
         os.makedirs(self.maps_dir, exist_ok=True)
         self.admin_file = os.path.join(self.data_dir, 'admin.json')
         self.cameras_file = os.path.join(self.maps_dir, 'cameras.json')
+        self.bases_file = os.path.join(self.maps_dir, 'bases.json')
 
         self.lock = threading.Lock()
         self.tokens = set()
@@ -366,6 +367,14 @@ class DashboardNode(Node):
         except (OSError, ValueError):
             return []
 
+    def load_bases(self):
+        try:
+            with open(self.bases_file, encoding='utf-8') as f:
+                bases = json.load(f)
+            return bases if isinstance(bases, list) else []
+        except (OSError, ValueError):
+            return []
+
     # -------------------------------------------------------------- API logic
 
     def api_boot(self):
@@ -514,6 +523,7 @@ class DashboardNode(Node):
         meta['has_map'] = bool(self.map_png)
         meta['mapping_active'] = self.mapping_active()
         meta['cameras'] = self.load_cameras()
+        meta['bases'] = self.load_bases()
         return meta
 
     def api_save_map(self):
@@ -538,8 +548,9 @@ class DashboardNode(Node):
     def api_reset_map(self):
         """Deletes the saved map here AND on the robot, then the robot
         relaunches itself into mapping mode (map_reset_node + the
-        start_robot.sh relaunch loop). Camera spots are cleared too - a
-        new area means new spots."""
+        start_robot.sh relaunch loop). Camera and base spots are cleared
+        too - a new area means new spots (old coordinates would be
+        meaningless on the new map)."""
         name = self.get_parameter('map_name').value
         removed = []
         for path in glob.glob(os.path.join(self.maps_dir, name + '.*')) + \
@@ -549,10 +560,11 @@ class DashboardNode(Node):
                 removed.append(os.path.basename(path))
             except OSError as exc:
                 return {'error': f'could not remove {path}: {exc}'}
-        tmp = self.cameras_file + '.tmp'
-        with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump([], f)
-        os.replace(tmp, self.cameras_file)
+        for spots_file in (self.cameras_file, self.bases_file):
+            tmp = spots_file + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
+                json.dump([], f)
+            os.replace(tmp, spots_file)
         reset = String()
         reset.data = 'reset'
         self.map_reset_pub.publish(reset)
@@ -587,6 +599,33 @@ class DashboardNode(Node):
         self.get_logger().warn(
             f'DASHBOARD: saved {len(clean)} camera spot(s) to {self.cameras_file}')
         return {'ok': True, 'cameras': clean}
+
+    def api_bases_get(self):
+        return {'bases': self.load_bases()}
+
+    def api_bases_set(self, body):
+        bases = body.get('bases')
+        if not isinstance(bases, list):
+            return {'error': 'bases must be a list'}
+        clean = []
+        for base in bases:
+            try:
+                clean.append({
+                    'id': str(base['id']),
+                    'name': str(base.get('name', base['id'])),
+                    'x': round(float(base['x']), 3),
+                    'y': round(float(base['y']), 3),
+                    'yaw': round(float(base.get('yaw', 0.0)), 3),
+                })
+            except (KeyError, TypeError, ValueError):
+                return {'error': f'bad base entry: {base}'}
+        tmp = self.bases_file + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(clean, f, indent=2)
+        os.replace(tmp, self.bases_file)
+        self.get_logger().warn(
+            f'DASHBOARD: saved {len(clean)} base spot(s) to {self.bases_file}')
+        return {'ok': True, 'bases': clean}
 
     def api_relocalise(self, body):
         pose = PoseWithCovarianceStamped()
@@ -729,6 +768,8 @@ class DashboardNode(Node):
                     self.send_json(node.api_map_info())
                 elif url.path == '/api/cameras':
                     self.send_json(node.api_cameras_get())
+                elif url.path == '/api/bases':
+                    self.send_json(node.api_bases_get())
                 elif url.path == '/api/cam.jpg':
                     key = parse_qs(url.query).get('src', ['cctv0'])[0]
                     jpg = node.get_camera_jpeg(key)
@@ -789,6 +830,8 @@ class DashboardNode(Node):
                     self.send_json(node.api_reset_map())
                 elif self.path == '/api/cameras':
                     self.send_json(node.api_cameras_set(body))
+                elif self.path == '/api/bases':
+                    self.send_json(node.api_bases_set(body))
                 elif self.path == '/api/change_password':
                     payload, code = node.api_change_password(body)
                     self.send_json(payload, code)

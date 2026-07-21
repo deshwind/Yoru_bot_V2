@@ -43,11 +43,14 @@ tracking_cctv1:
 confirm_cctv1:
   ros__parameters:
     person_confidence: 0.7
-    device_confidence: 0.6
+    device_confidence: 0.3          # any vape/cigarette detection >=30%
     proximity_iou: 0.05
     persistence_frames: 5
     confirm_confidence: 0.6
     uncertain_confidence: 0.4
+    confounder_override_confidence: 0.3  # matches device_confidence: a real
+                                    # vape/cigarette detection this weak
+                                    # still outranks the COCO phone guess
     input_topic: /compliance/cctv1/tracked
     output_topic: /compliance/cctv1/confirmed
     room_id: camera_1               # spoken in the PA announcement
@@ -88,11 +91,14 @@ tracking_cctv2:
 confirm_cctv2:
   ros__parameters:
     person_confidence: 0.7
-    device_confidence: 0.6
+    device_confidence: 0.3          # any vape/cigarette detection >=30%
     proximity_iou: 0.05
     persistence_frames: 5
     confirm_confidence: 0.6
     uncertain_confidence: 0.4
+    confounder_override_confidence: 0.3  # matches device_confidence: a real
+                                    # vape/cigarette detection this weak
+                                    # still outranks the COCO phone guess
     input_topic: /compliance/cctv2/tracked
     output_topic: /compliance/cctv2/confirmed
     room_id: camera_2               # spoken in the PA announcement
@@ -130,6 +136,9 @@ compliance_fsm_node:
     obstacle_stop_distance: 0.35
     scan_ignore_radius: 0.2         # lidar sees the robot's own frame at
                                     # ~0.18m; ignore self-hits in the e-stop
+    obstacle_debounce_duration: 0.4  # a close reading must persist this
+                                    # long (rotation can graze the robot's
+                                    # own mast for one frame otherwise)
     target_lost_timeout: 8.0
 
 # Laptop speakers: PA announcement only (the robot says the direct warning)
@@ -183,7 +192,9 @@ patrol_node:
 
 return_to_base_node:
   ros__parameters:
-    bases: [0.0, 0.0, 0.0]          # charging dock pose(s) in the map frame
+    bases: [0.0, 0.0, 0.0]          # fallback if no base marked yet
+    bases_file: /home/desh/Yoru_bot_V2/maps/bases.json  # dashboard "Mark
+                                    # base spot" button, hot-reloaded
     battery_threshold: 20.0
 
 # ---------------- Robot hardware (run on the Pi) ----------------

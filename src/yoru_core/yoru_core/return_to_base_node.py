@@ -9,11 +9,15 @@ Triggers:
   /compliance/battery_level  (std_msgs/Float32, percent) below threshold
   /compliance/return_to_base (std_msgs/Bool) manual request
 
-Bases parameter is a flat list: [x1, y1, yaw1, x2, y2, yaw2, ...]
+Base poses come from <maps_dir>/bases.json (hot-reloaded, same pattern as
+camera spots): [{"id": "...", "name": "...", "x":, "y":, "yaw":}, ...],
+written by the dashboard Map screen "Mark base spot" button. The static
+'bases' parameter is a fallback for deployments with no bases.json yet.
 """
 
 import json
 import math
+import os
 
 import rclpy
 from nav2_msgs.action import NavigateToPose
@@ -29,6 +33,7 @@ class ReturnToBaseNode(Node):
         super().__init__('return_to_base_node')
 
         self.declare_parameter('bases', [0.0, 0.0, 0.0])
+        self.declare_parameter('bases_file', '')
         self.declare_parameter('battery_threshold', 20.0)
 
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
@@ -40,6 +45,8 @@ class ReturnToBaseNode(Node):
         self.navigating = False
         self.at_base = False
         self.goal_handle = None
+        self.bases_from_file = None  # None until bases.json loads at least once
+        self.file_mtime = 0.0
 
         self.base_request_pub = self.create_publisher(
             Bool, '/compliance/base_request', 10)
@@ -54,8 +61,40 @@ class ReturnToBaseNode(Node):
                                  self.fsm_callback, 10)
         self.create_timer(1.0, self.tick)
 
-        n = len(self.get_parameter('bases').value) // 3
-        self.get_logger().info(f'Return-to-base ready ({n} base poses)')
+        self.reload_bases()
+        n = len(self.bases()) // 3
+        self.get_logger().info(f'Return-to-base ready ({n} base pose(s))')
+
+    def reload_bases(self):
+        """Re-reads bases.json when it changed on disk (mirrors cameras.json)."""
+        path = self.get_parameter('bases_file').value
+        if not path:
+            return
+        path = os.path.expanduser(path)
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            return
+        if mtime == self.file_mtime:
+            return
+        try:
+            with open(path, encoding='utf-8') as f:
+                entries = json.load(f)
+            flat = []
+            for b in entries:
+                flat += [float(b['x']), float(b['y']), float(b.get('yaw', 0.0))]
+            self.bases_from_file = flat
+            self.file_mtime = mtime
+            self.get_logger().info(
+                f'Loaded {len(entries)} base spot(s) from {path}')
+        except (ValueError, OSError, KeyError) as exc:
+            self.get_logger().warn(f'Could not read {path}: {exc}')
+
+    def bases(self):
+        """bases.json spots once any exist, else the static param fallback."""
+        if self.bases_from_file:
+            return self.bases_from_file
+        return self.get_parameter('bases').value
 
     def battery_callback(self, msg):
         if msg.data < self.get_parameter('battery_threshold').value and not self.requested:
@@ -103,7 +142,8 @@ class ReturnToBaseNode(Node):
         if robot is None:
             return
 
-        bases = self.get_parameter('bases').value
+        self.reload_bases()
+        bases = self.bases()
         nearest, best_d = None, float('inf')
         for i in range(len(bases) // 3):
             x, y, yaw = bases[3 * i], bases[3 * i + 1], bases[3 * i + 2]
