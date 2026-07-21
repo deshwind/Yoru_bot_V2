@@ -160,6 +160,197 @@ even when COCO simultaneously calls the object a phone near the face (C7
 confounder). This is deliberately permissive for demos; raise both values if
 false alarms appear.
 
+---
+
+# Technical reference
+
+Everything below is the detail needed to describe or reproduce the system:
+models, datasets, training, the decision algorithms, and the tuned
+parameters. Dataset licences and the label-quality audit are in
+[`docs/DATASETS.md`](docs/DATASETS.md); the chronological build history,
+including every bug and its root cause, is in
+[`docs/DEVLOG.md`](docs/DEVLOG.md).
+
+## 1. Perception
+
+### 1.1 Models
+
+Two YOLOv8 models run on **every** CCTV frame and their detections are
+merged into one array (`yolo_detector_node`):
+
+| Role | Model | Classes | Source |
+|---|---|---|---|
+| People | **YOLOv8n** (stock COCO weights, auto-downloads) | `person` (+ COCO classes remapped for C7 confounders) | Ultralytics, AGPL-3.0 |
+| Devices | **YOLOv8n specialist**, `smoking_vape_yolov8.pt` | `cigarette`, `vape_device`, `smoke_vapour` | Trained for this project (below) |
+
+Frames are processed at `process_hz: 5.0` per camera at `input_size: 640`.
+Two CCTV pipelines run in parallel (`cctv1` = laptop webcam, `cctv2` =
+Logitech C920), each with its own detector, tracker, confirmation node and
+camera spot.
+
+### 1.2 Training datasets
+
+Three Roboflow Universe datasets, all **CC BY 4.0**, merged into
+`datasets/smoking_vape_v1` in YOLO format:
+
+| # | Dataset (workspace) | Version | Link | Base images | Classes used |
+|---|---|---|---|---|---|
+| 1 | Cigarette Vape Detection (`takoyati`) | v14 | https://universe.roboflow.com/takoyati/cigarette-vape-detection/dataset/14 | 5,774 | `cigarette`, `vape` |
+| 2 | vaping (`tiara-fb7pp` / `vaping-ulrul`) | v13 | https://universe.roboflow.com/tiara-fb7pp/vaping-ulrul/dataset/13 | 2,300 | `vape-pod`, `asap` |
+| 3 | Vape Dataset (`vape-dataset`) | v1 | https://universe.roboflow.com/vape-dataset/vape-dataset/dataset/1 | 815 | `Vape` |
+
+Class remapping into the project vocabulary (`asap` is Indonesian for
+"smoke" — exhaled clouds):
+
+| Source class | Project class (id) |
+|---|---|
+| takoyati `cigarette` | `cigarette` (0) |
+| takoyati `vape`, tiara `vape-pod`, vape-dataset `Vape` | `vape_device` (1) |
+| tiara `asap` | `smoke_vapour` (2) |
+
+Merged totals as trained (including the augmentations published with each
+dataset version):
+
+| Split | Images | `cigarette` boxes | `vape_device` boxes | `smoke_vapour` boxes |
+|---|---|---|---|---|
+| train | 18,905 | 7,077 | 14,262 | 3,239 |
+| valid | 1,779 | 651 | 1,231 | 261 |
+| test | 658 | 322 | 555 | 0 |
+
+**Label-quality audit**: 36 randomly sampled annotated images were rendered
+with their boxes and inspected manually — 34/36 clearly correct, 2
+tiny/ambiguous, 0 clearly mislabelled.
+
+`datasets/` and `*.pt` weights are git-ignored; re-fetch the sources with a
+free Roboflow API key using the links above.
+
+### 1.3 Training run
+
+| Setting | Value |
+|---|---|
+| Architecture | YOLOv8n (nano) |
+| Epochs | **49** (early-stopped, `patience: 20`; script default is 100) |
+| Image size | 640 × 640 |
+| Batch size | 16 |
+| Hardware | NVIDIA RTX 3050 Ti (4 GB, CUDA 13.0) |
+| Inference cost | ~4.5 ms/frame on GPU |
+| Script | `src/yoru_core/training/train_and_evaluate.py` |
+
+Reproduce with:
+
+```bash
+python3 src/yoru_core/training/train_and_evaluate.py \
+    --data datasets/smoking_vape_v1/data.yaml --epochs 100 --device 0
+```
+
+### 1.4 Results
+
+| Split | mAP50 overall | `cigarette` | `vape_device` | `smoke_vapour` |
+|---|---|---|---|---|
+| test (held out) | **0.832** | 0.821 | 0.843 | — (no test boxes) |
+| valid | 0.726 | 0.839 | 0.916 | 0.423 |
+
+The test split contains no `smoke_vapour` instances, so that class is
+evaluated on validation only. `smoke_vapour` is used **solely** as C5
+supporting evidence and can never trigger an escalation by itself.
+
+## 2. Tracking — SORT
+
+`sort_tracker.py` implements SORT (Simple Online and Realtime Tracking): a
+**constant-velocity Kalman filter** per bounding box, with greedy IoU
+association between predictions and new detections.
+
+| Parameter | Value |
+|---|---|
+| `iou_threshold` | 0.3 |
+| `max_missed_frames` | 15 |
+| `min_hits` | 1 |
+| Track ID prefix | `c1_` / `c2_` (per camera) |
+
+Track IDs give criterion C6 and let the FSM follow one individual. Because
+SORT reassigns IDs when a person or device moves sharply, the confirmation
+and FSM layers both tolerate ID churn (§3.2).
+
+## 3. Decision layer
+
+### 3.1 Event confirmation (criteria C1–C7)
+
+`event_confirmation_node` is the decision gate. Per person track:
+
+| Criterion | Test |
+|---|---|
+| C1 person | person confidence > `person_confidence` (0.7) |
+| C2 device | cigarette/vape confidence > `device_confidence` (0.3) |
+| C3 proximity | device overlaps the mouth region (upper 40 % of the person box) or IoU > `proximity_iou` (0.05) |
+| C4 persistence | C1∧C2∧C3 held for `persistence_frames` (5) consecutive frames |
+| C5 support | optional evidence: `smoke_vapour` (0.3), `hand_mouth_gesture` (0.2), `hand_face` (0.1) |
+| C6 tracking | same SORT track ID throughout |
+| C7 FP risk | `pen` / `mobile_phone` / `straw` near the mouth ⇒ high risk |
+
+Scoring:
+
+```
+confidence = 0.4·device + 0.3·proximity + 0.2·persistence + 0.1·support
+```
+
+- **confirmed** — `confidence ≥ 0.6` ∧ C1 ∧ C2 ∧ C4 ∧ risk ≠ high
+- **uncertain** — `0.4 ≤ confidence < 0.6` (dashboard only, no escalation)
+- **rejected** — below 0.4, discarded silently
+
+**C7 override**: a specialist detection at or above
+`confounder_override_confidence` (0.3) overrides the confounder veto —
+without it, COCO labelling a vape at the mouth as `cell phone` permanently
+blocked confirmation (status `uncertain`, `C7=high`). This was the observed
+cause of non-dispatch during live testing.
+
+### 3.2 Robustness to track-ID churn
+
+- A frame failing C1–C3 **decrements** the persistence count instead of
+  zeroing it, so motion blur or brief occlusion does not restart C4.
+- A new track ID inherits the room's ongoing violation start time, so the
+  FSM's confirm window survives re-identification.
+- During escalation the target stays active while *any* confirmed event
+  keeps arriving from the same camera, so the robot is not called off
+  mid-approach by an ID change.
+
+### 3.3 Escalation FSM
+
+`compliance_fsm_node` — five graduated stages plus safety overrides:
+
+| Stage | Trigger | Tuned duration |
+|---|---|---|
+| S0 MONITORING | confirmed event must persist | `monitor_confirm_duration` 5.0 s |
+| S1 PA_WARNING | laptop PA announcement, grace period | `pa_warning_duration` 3.0 s |
+| S2 APPROACH | Nav2 drives to the camera spot | `approach_timeout` 90 s |
+| S3 DIRECT_WARNING | robot speaks on arrival | 3 repeats × 8 s (`direct_warning_duration` 30 s cap) |
+| S4 LOGGING | incident written + evidence email | `logging_duration` 2.0 s |
+| SAFE_STOP | obstacle inside 0.35 m for 0.4 s | `safe_stop_duration` 3.0 s |
+
+Overrides: compliance reset (`compliance_clear_duration` 10 s of no
+violation ⇒ "complied"), target loss (`target_lost_timeout` 8 s), per-person
+`cooldown_duration` 60 s, admin pause, dashboard e-stop. The e-stop
+publishes on `cmd_vel_tracker`, which outranks Nav2 in twist_mux
+(joystick 100 > tracker 20 > navigation 10).
+
+## 4. Navigation and mapping
+
+| Component | Choice / value |
+|---|---|
+| SLAM | `slam_toolbox` async, Ceres solver (SPARSE_NORMAL_CHOLESKY, SCHUR_JACOBI) |
+| Map resolution | 0.05 m/cell |
+| Laser range used | 0.3 – 12.0 m (A1 real range; 0.3 excludes robot self-hits) |
+| Scan linking | `minimum_travel_distance` 0.2 m, `minimum_travel_heading` 0.25 rad |
+| Localization | AMCL, differential motion model, 500–2000 particles, auto initial pose at map origin |
+| Global planner | NavFn (`nav2_navfn_planner/NavfnPlanner`) |
+| Local planner | DWB (`dwb_core::DWBLocalPlanner`), `sim_time` 1.7 s |
+| Speed limits | `max_vel_x` 0.26 m/s, `max_vel_theta` 1.0 rad/s |
+| Goal tolerance | 0.25 m / 0.25 rad |
+| Costmap layers | local: voxel + inflation; global: static + obstacle + inflation |
+| Footprint | `robot_radius` 0.22 m, `inflation_radius` 0.55 m |
+
+Odometry is wheel-encoder based (`arduino_driver_node`), publishing
+`odom → base_link` at ~18 Hz; AMCL supplies `map → odom`.
+
 ## Packages
 
 | Package | Contents |
