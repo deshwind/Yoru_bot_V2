@@ -297,13 +297,57 @@ confidence = 0.4·device + 0.3·proximity + 0.2·persistence + 0.1·support
 - **uncertain** — `0.4 ≤ confidence < 0.6` (dashboard only, no escalation)
 - **rejected** — below 0.4, discarded silently
 
-**C7 override**: a specialist detection at or above
-`confounder_override_confidence` (0.3) overrides the confounder veto —
-without it, COCO labelling a vape at the mouth as `cell phone` permanently
-blocked confirmation (status `uncertain`, `C7=high`). This was the observed
-cause of non-dispatch during live testing.
+### 3.2 Why the thresholds are 0.3 (the phone/vape confusion)
 
-### 3.2 Robustness to track-ID churn
+`device_confidence` and `confounder_override_confidence` are both set to
+**0.3**. This is a deliberate design decision, not a loose default, and it
+resolves a failure mode observed repeatedly in live testing.
+
+**The problem.** A vape held at the mouth is geometrically almost identical
+to a phone held at the face: a small dark rectangle, in a hand, beside the
+head. Stock COCO YOLOv8n classifies it as `cell phone`, which the project
+maps to `mobile_phone` — a **C7 confounder**. C7 exists for good reason: it
+stops the robot confronting someone for taking a phone call. But it vetoes
+confirmation outright, so a genuine vaping event was suppressed by the very
+guard meant to prevent false accusations.
+
+**What that looked like in the live logs.** With the original override at
+0.75, the confirmation gate emitted, frame after frame:
+
+```
+status=uncertain conf=0.534 class=vape_device C1=True C2=True C3=True C4=False C7=high
+```
+
+Every criterion that matters passed — a person (C1), a vape (C2), at the
+mouth (C3) — yet the event never reached `confirmed`, the FSM stayed in
+MONITORING, and **the robot was never dispatched**. The specialist model was
+scoring the vape around 0.53–0.63, comfortably above its own detection
+threshold but below the 0.75 needed to overrule the phone label. The two
+detectors disagreed, and the disagreement always resolved in favour of doing
+nothing.
+
+**Why 0.3 is the right resolution.** The two models are not equally
+trustworthy on this object. The specialist was trained specifically on vapes
+and reaches **0.916 mAP50 on `vape_device`** (validation); COCO has no vape
+class at all and is guessing from shape alone. Deferring to COCO's guess over
+a purpose-trained detector inverts the evidence. Setting the override equal
+to `device_confidence` (0.3) states the policy plainly: *if the specialist
+sees a device at all, its opinion outranks a COCO confounder.* The C7 guard
+still protects the case it was designed for — a phone with **no** device
+detection present is still vetoed, because there is nothing to override with.
+
+**The trade-off, stated honestly.** 0.3 is permissive. Low-confidence
+specialist detections now escalate, so a phone the specialist weakly
+mistakes for a vape can trigger the pipeline. For a demonstration system
+this is the correct direction to err: a missed violation is invisible and
+looks like a broken robot, whereas a false positive produces a spoken warning
+and a logged incident that a human can dismiss. For deployment, the value
+should be raised — the confidences observed in testing suggest **0.5–0.6**
+would retain the override for genuine vapes (which scored 0.53+) while
+rejecting marginal detections. C4 persistence (5 consecutive frames) and the
+FSM's 5 s confirm window already suppress isolated single-frame errors.
+
+### 3.3 Robustness to track-ID churn
 
 - A frame failing C1–C3 **decrements** the persistence count instead of
   zeroing it, so motion blur or brief occlusion does not restart C4.
@@ -313,7 +357,7 @@ cause of non-dispatch during live testing.
   keeps arriving from the same camera, so the robot is not called off
   mid-approach by an ID change.
 
-### 3.3 Escalation FSM
+### 3.4 Escalation FSM
 
 `compliance_fsm_node` — five graduated stages plus safety overrides:
 
@@ -372,7 +416,7 @@ Odometry is wheel-encoder based (`arduino_driver_node`), publishing
 Both `sim` and `real_robot` support `mode:=auto|mapping|localization`
 (`auto` = mapping until `maps/main_map.yaml` exists).
 
-## Hardware (robot)
+## 5. Hardware (robot)
 
 Raspberry Pi 4 (Ubuntu 22.04 + ROS 2 Humble base), **Arduino Nano Every** →
 L298N → DC motors with quadrature encoders, RPLIDAR A1 (USB), Pi HQ Camera
@@ -431,3 +475,123 @@ plus a voice model from the Rhasspy piper-voices release.
 - **Arduino motor bridge** replaces V1's direct-GPIO L298N driver.
 - Same proven base as V1: SLAM/Nav2 tuning, SORT tracking, C1–C7
   confirmation, incident logger/emailer, PS4 joystick.
+
+## 6. Challenges and limitations
+
+Observed during real deployment and testing. Each is a genuine constraint of
+the current system, not a to-do list item.
+
+### 6.1 Detection: the phone/vape ambiguity
+
+Covered in full in §3.2. In short: a vape at the mouth and a phone at the
+face are visually near-identical to a COCO detector, and the C7 confounder
+guard suppressed genuine violations until the override threshold was lowered
+to 0.3. The residual limitation is that the system cannot *distinguish* the
+two cases with certainty — it now chooses to trust the specialist model, so
+the failure mode has moved from "misses real vaping" to "may act on a phone
+the specialist weakly misreads". Better separation needs a phone class in
+the specialist's own training set, so a single model arbitrates instead of
+two models disagreeing.
+
+### 6.2 Escalation latency
+
+The full chain from first puff to the robot arriving is long, and each delay
+exists for a reason:
+
+| Stage | Delay | Why it exists |
+|---|---|---|
+| Detection → confirmed | ~1 s (5 frames at 5 Hz) | C4 persistence: suppresses single-frame errors |
+| Confirmed → PA | 5 s (`monitor_confirm_duration`) | ensures a sustained violation, not a passing gesture |
+| PA → dispatch | 3 s (`pa_warning_duration`) | grace period: stop now and nothing happens |
+| Dispatch → arrival | distance ÷ 0.26 m/s | Nav2 speed cap for safe indoor operation |
+
+Detection processes at 5 Hz per camera (CPU/GPU budget), so the perception
+stage alone cannot react faster than ~200 ms per frame. The PA grace period
+was originally **20 s**, which made the system appear broken in testing —
+the announcement played and nothing followed — and was cut to 3 s. There is
+a real tension here: a shorter grace period gives a more responsive demo, a
+longer one is more defensible ethically, since it gives the person a genuine
+opportunity to comply before a robot is sent. The current 3 s favours
+demonstrability.
+
+### 6.3 Wi-Fi range and network fragility
+
+The two machines are coupled over Wi-Fi, and this is the least robust part
+of the system:
+
+- **Multicast is blocked** on university/corporate networks, so standard DDS
+  peer discovery fails silently — each machine works alone while the
+  dashboard shows no map, no robot camera and a dead joystick. Resolved with
+  a **FastDDS discovery server hosted on the robot** (§ *Networking*).
+- **The discovery server is pinned to an IP address.** DHCP renewal or a
+  network change breaks the link until `ros_network.env` is updated on both
+  machines. A hostname or mDNS-based rendezvous would be more robust.
+- **Range degrades the link before it breaks it.** As the robot moves away
+  from the access point, the robot camera stream degrades first (it is the
+  highest-bandwidth topic), then odometry and map updates become choppy, and
+  goals can be delayed. Sending the camera as **compressed JPEG (~46 KB
+  frames) instead of raw (~1 MB)** made the difference between an unusable
+  and a usable video feed on campus Wi-Fi.
+- **Safety-critical loops run onboard.** SLAM/AMCL, Nav2 and the motor
+  driver all run on the Pi, so a Wi-Fi dropout stops new *commands* but never
+  leaves the robot navigating blind. The 2 s firmware dead-man stops the
+  motors if the Pi itself goes quiet.
+
+### 6.4 Odometry drift and floor surface
+
+Wheel odometry is dead reckoning, and the physical robot violates its
+assumptions:
+
+- **Carpet.** Soft pile deforms under the wheels, so the effective rolling
+  radius differs from the measured 32.5 mm, and the wheels sink and drag.
+  Distance travelled is systematically under-reported compared with hard
+  flooring.
+- **Weight distribution.** The battery, Pi and lidar are not centred over
+  the drive axle. Load shifts under acceleration and turning change the
+  traction on each wheel, so commanded and actual motion diverge — the robot
+  does not always arrive exactly at the marked spot, and heading error
+  accumulates faster than position error.
+- **Slip is invisible to the encoders.** They measure *wheel* rotation, not
+  *robot* motion. A wheel spinning on carpet or scuffing during a turn
+  reports distance that was never travelled, which is why turning in place
+  is the worst case for drift.
+- **Calibration uncertainty.** `enc_counts_per_rev` was measured by hand
+  rotation and gave inconsistent readings across attempts (~1965 vs ~3166 in
+  separate sessions). 1965 is in use, but it was never confirmed by a
+  controlled test, and this single constant scales every distance the robot
+  believes it has travelled. **If maps come out smeared or the robot
+  consistently overshoots or stops short, verify this value first.**
+
+AMCL corrects accumulated drift by matching lidar scans against the saved
+map, so absolute position is recovered as long as the surroundings are
+recognisable — but correction is retrospective, and in a sparse or
+symmetrical space there may be too little structure to correct against.
+
+### 6.5 Lidar sensing limits
+
+- **One horizontal plane.** The RPLIDAR A1 sees only at its mounting height.
+  Low obstacles (cables, thresholds, feet under a table) and overhanging ones
+  (shelves, tabletops) are invisible to both the costmaps and the emergency
+  stop.
+- **Glass and mirrors** transmit or specularly reflect the beam, producing
+  missing or phantom walls. Any glass-walled area will map poorly.
+- **Self-hits.** The lidar detects the robot's own frame at ~0.18 m. Left
+  unfiltered these were mapped as obstacles along the entire driven path
+  (producing a heavily speckled map) and tripped the emergency stop on every
+  approach. Filtered via `min_laser_range` 0.3 m and `scan_ignore_radius`
+  0.2 m — but the consequence is a genuine **0.3 m blind ring** around the
+  robot.
+
+### 6.6 Scope limits
+
+- Camera spots are **fixed poses**, not per-person positioning: the robot
+  drives to where people typically stand for that camera, not to the
+  individual's actual location. Per-person navigation would require
+  camera-to-map calibration (V1's homography approach), traded away
+  deliberately for a GUI workflow with no calibration step.
+- One violator at a time — the FSM tracks a single target through an
+  escalation.
+- `smoke_vapour` is weak (0.423 mAP50) and is used only as supporting
+  evidence.
+- The system detects and warns; it has no enforcement capability beyond
+  logging and email.
