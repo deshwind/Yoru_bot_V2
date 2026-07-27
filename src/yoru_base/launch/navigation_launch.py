@@ -17,7 +17,8 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, SetEnvironmentVariable
+from launch.actions import (DeclareLaunchArgument, GroupAction,
+                            SetEnvironmentVariable, TimerAction)
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import LoadComposableNodes
@@ -179,15 +180,26 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings +
                         [('cmd_vel', 'cmd_vel_nav'), ('cmd_vel_smoothed', 'cmd_vel')]),
-            Node(
-                package='nav2_lifecycle_manager',
-                executable='lifecycle_manager',
-                name='lifecycle_manager_navigation',
-                output='screen',
-                arguments=['--ros-args', '--log-level', log_level],
-                parameters=[{'use_sim_time': use_sim_time},
-                            {'autostart': autostart},
-                            {'node_names': lifecycle_nodes}]),
+            # Delay the lifecycle manager so every server node above has
+            # fully registered (esp. slow over the FastDDS discovery server
+            # on the Pi) before it configures them. Without this the
+            # get_state service call to smoother_server times out and the
+            # whole navigation bringup aborts. bond_timeout + respawn
+            # reconnection add resilience after activation too.
+            TimerAction(
+                period=8.0,
+                actions=[Node(
+                    package='nav2_lifecycle_manager',
+                    executable='lifecycle_manager',
+                    name='lifecycle_manager_navigation',
+                    output='screen',
+                    arguments=['--ros-args', '--log-level', log_level],
+                    parameters=[{'use_sim_time': use_sim_time},
+                                {'autostart': autostart},
+                                {'node_names': lifecycle_nodes},
+                                {'bond_timeout': 60.0},
+                                {'attempt_respawn_reconnection': True},
+                                {'bond_respawn_max_duration': 30.0}])]),
         ]
     )
 
