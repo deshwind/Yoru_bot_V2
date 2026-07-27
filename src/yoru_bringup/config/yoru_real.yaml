@@ -122,9 +122,9 @@ compliance_fsm_node:
   ros__parameters:
     events_topics: ['/compliance/cctv1/confirmed', '/compliance/cctv2/confirmed']
     monitor_confirm_duration: 5.0   # smoking must persist before the PA
-    pa_warning_duration: 3.0        # short pause after the PA, then the
-                                    # robot dispatches (stop vaping within
-                                    # it and nothing happens)
+    pa_warning_duration: 8.0        # 8 s grace after the PA, then the robot
+                                    # dispatches (stop vaping within it and
+                                    # nothing happens)
     approach_timeout: 90.0
     direct_warning_duration: 30.0    # safety cap (>= repeats*interval)
     direct_warning_repeats: 3      # robot says the warning 3 times
@@ -139,6 +139,9 @@ compliance_fsm_node:
     obstacle_debounce_duration: 0.4  # a close reading must persist this
                                     # long (rotation can graze the robot's
                                     # own mast for one frame otherwise)
+    min_obstacle_beams: 4           # need >=4 adjacent beams inside the stop
+                                    # distance to count as a real obstacle;
+                                    # rejects browning-out lidar noise spikes
     target_lost_timeout: 8.0
 
 # Laptop speakers: PA announcement only (the robot says the direct warning)

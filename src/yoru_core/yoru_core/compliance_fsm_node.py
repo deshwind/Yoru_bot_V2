@@ -52,6 +52,11 @@ class ComplianceFsmNode(Node):
         # camera mount for one frame) must not kill the whole approach;
         # require the obstacle to persist this long before stopping.
         self.declare_parameter('obstacle_debounce_duration', 0.4)
+        # A real obstacle reflects several adjacent lidar beams; a lidar that
+        # is browning out (USB undervoltage) emits isolated noise spikes.
+        # Require at least this many beams inside the stop distance before
+        # treating it as a real obstacle, so noise can't abort the approach.
+        self.declare_parameter('min_obstacle_beams', 4)
         self.declare_parameter('target_lost_timeout', 5.0)
         # One confirmed-events topic per CCTV pipeline
         self.declare_parameter('events_topics', ['/compliance/confirmed_events'])
@@ -72,6 +77,7 @@ class ComplianceFsmNode(Node):
         self.room_last_seen = {}
         self.cooldowns = {}
         self.obstacle_since = None
+        self.close_beam_count = 0
         self.min_scan_range = float('inf')
         self.nav_result = None
         self.stage_reached = 'S0'
@@ -140,9 +146,13 @@ class ComplianceFsmNode(Node):
         # obstacle e-stop trips the moment APPROACH starts. Real obstacle
         # avoidance is Nav2's costmaps; this check is only the e-stop.
         ignore = self.param('scan_ignore_radius')
+        stop = self.param('obstacle_stop_distance')
         valid = [r for r in msg.ranges
                  if msg.range_min < r < msg.range_max and r > ignore]
         self.min_scan_range = min(valid) if valid else float('inf')
+        # How many beams fall inside the stop distance - a real obstacle
+        # lights up many; a noisy/browning-out lidar only a stray few.
+        self.close_beam_count = sum(1 for r in valid if r < stop)
 
     def paused_callback(self, msg):
         if msg.data != self.autonomy_paused:
@@ -339,14 +349,15 @@ class ComplianceFsmNode(Node):
                 return
 
     def approach_tick(self):
-        if self.min_scan_range < self.param('obstacle_stop_distance'):
+        if self.close_beam_count >= int(self.param('min_obstacle_beams')):
             now = time.monotonic()
             if self.obstacle_since is None:
                 self.obstacle_since = now
             elif now - self.obstacle_since >= \
                     self.param('obstacle_debounce_duration'):
                 self.get_logger().warn(
-                    f'Obstacle at {self.min_scan_range:.2f} m '
+                    f'Obstacle at {self.min_scan_range:.2f} m, '
+                    f'{self.close_beam_count} beams '
                     f'(persisted {now - self.obstacle_since:.1f}s): SAFE_STOP')
                 self.estop_pub.publish(Twist())
                 self.transition('SAFE_STOP')
