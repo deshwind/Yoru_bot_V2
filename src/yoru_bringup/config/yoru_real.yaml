@@ -142,6 +142,10 @@ compliance_fsm_node:
     min_obstacle_beams: 4           # need >=4 adjacent beams inside the stop
                                     # distance to count as a real obstacle;
                                     # rejects browning-out lidar noise spikes
+    obstacle_fov_center: 0.0        # forward-facing e-stop cone: 0 = lidar
+    obstacle_fov_halfwidth: 1.047   # forward; halfwidth 1.047 = 120deg cone.
+                                    # Walls behind/beside no longer stop it.
+                                    # (set center: 3.14159 if 0 is the rear)
     target_lost_timeout: 8.0
 
 # Laptop speakers: PA announcement only (the robot says the direct warning)

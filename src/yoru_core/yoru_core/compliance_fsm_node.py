@@ -15,6 +15,7 @@ compliance reset at any stage after compliance_clear_duration.
 """
 
 import json
+import math
 import time
 
 import rclpy
@@ -57,6 +58,13 @@ class ComplianceFsmNode(Node):
         # Require at least this many beams inside the stop distance before
         # treating it as a real obstacle, so noise can't abort the approach.
         self.declare_parameter('min_obstacle_beams', 4)
+        # The e-stop only watches a forward-facing arc: the robot drives
+        # forward, so a wall behind or beside it must not stop it - only
+        # things in its path. center 0 = lidar forward (mount is unrotated);
+        # halfwidth 1.047 rad = a 120-degree front cone. If the sensor's 0
+        # mark is not physically forward, set obstacle_fov_center (pi = rear).
+        self.declare_parameter('obstacle_fov_center', 0.0)
+        self.declare_parameter('obstacle_fov_halfwidth', 1.047)
         self.declare_parameter('target_lost_timeout', 5.0)
         # One confirmed-events topic per CCTV pipeline
         self.declare_parameter('events_topics', ['/compliance/confirmed_events'])
@@ -147,11 +155,21 @@ class ComplianceFsmNode(Node):
         # avoidance is Nav2's costmaps; this check is only the e-stop.
         ignore = self.param('scan_ignore_radius')
         stop = self.param('obstacle_stop_distance')
-        valid = [r for r in msg.ranges
-                 if msg.range_min < r < msg.range_max and r > ignore]
+        center = self.param('obstacle_fov_center')
+        half = self.param('obstacle_fov_halfwidth')
+        # Only beams in the forward cone count: a wall behind/beside the
+        # robot is not in its path and must not trip the approach e-stop.
+        valid = []
+        for i, r in enumerate(msg.ranges):
+            if not (msg.range_min < r < msg.range_max and r > ignore):
+                continue
+            angle = msg.angle_min + i * msg.angle_increment
+            delta = math.atan2(math.sin(angle - center), math.cos(angle - center))
+            if abs(delta) <= half:
+                valid.append(r)
         self.min_scan_range = min(valid) if valid else float('inf')
-        # How many beams fall inside the stop distance - a real obstacle
-        # lights up many; a noisy/browning-out lidar only a stray few.
+        # How many forward beams fall inside the stop distance - a real
+        # obstacle lights up many; a noisy/browning-out lidar only a stray few.
         self.close_beam_count = sum(1 for r in valid if r < stop)
 
     def paused_callback(self, msg):
