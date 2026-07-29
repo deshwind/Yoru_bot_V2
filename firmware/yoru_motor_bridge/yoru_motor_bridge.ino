@@ -30,6 +30,13 @@
 
 #define BAUDRATE 57600
 #define MAX_PWM 255
+// The heavier robot needs a hard pulse to break static friction on start,
+// but only a modest PWM to keep rolling. KICKSTART primes the PID output
+// when motion begins (breaks stiction); MIN_DRIVE_PWM is the floor that
+// keeps it rolling afterwards so the PID never drops below the point where
+// the wheels would stall again. Bench-measured breakaway ~200.
+#define KICKSTART_PWM 235
+#define MIN_DRIVE_PWM 120
 #define PID_RATE 30  // Hz
 #define AUTO_STOP_INTERVAL 2000  // ms
 
@@ -191,7 +198,18 @@ void updatePID() {
 
   doPID(&rightPID);
   doPID(&leftPID);
-  setMotorSpeeds(leftPID.output, rightPID.output);
+  setMotorSpeeds(driveFloor(leftPID.output, leftPID.TargetTicksPerFrame),
+                 driveFloor(rightPID.output, rightPID.TargetTicksPerFrame));
+}
+
+/* Floor the motor PWM so a nonzero speed command always overcomes the
+   heavier robot's static friction. Leaves the PID's own output untouched;
+   only the value sent to the motor is raised to MIN_DRIVE_PWM. */
+long driveFloor(long out, double target) {
+  if (target == 0) return out;
+  if (out >= 0 && out < MIN_DRIVE_PWM) return MIN_DRIVE_PWM;
+  if (out < 0 && out > -MIN_DRIVE_PWM) return -MIN_DRIVE_PWM;
+  return out;
 }
 
 /* ---------------- Serial command handling ----------------------------- */
@@ -247,6 +265,13 @@ void runCommand() {
         resetPID();
         moving = 0;
       } else {
+        if (!moving) {
+          // Starting from rest: prime the PID output with a hard kick so
+          // the heavy robot breaks static friction; the PID then settles
+          // it back down to the speed the target actually needs.
+          leftPID.output = (arg1 >= 0) ? KICKSTART_PWM : -KICKSTART_PWM;
+          rightPID.output = (arg2 >= 0) ? KICKSTART_PWM : -KICKSTART_PWM;
+        }
         moving = 1;
       }
       leftPID.TargetTicksPerFrame = arg1;
