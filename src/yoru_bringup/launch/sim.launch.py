@@ -34,7 +34,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
-DEFAULT_MAP = os.path.expanduser('~/Yoru_bot_V2/maps/main_map.yaml')
+DEFAULT_MAP = os.path.expanduser('~/Yoru_bot_V2/maps/sim/main_map.yaml')
 
 
 def resolve_mode(context):

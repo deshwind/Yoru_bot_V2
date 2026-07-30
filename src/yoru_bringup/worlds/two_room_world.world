@@ -23,6 +23,14 @@
 <sdf version="1.6">
   <world name="two_room_world">
 
+    <!-- Default GUI view: elevated overview of both rooms so the robot and
+         the mapping progress are visible as soon as Gazebo opens. -->
+    <gui fullscreen="0">
+      <camera name="user_camera">
+        <pose>0 -6 18 0 1.25 1.5708</pose>
+      </camera>
+    </gui>
+
     <include>
       <uri>model://sun</uri>
     </include>

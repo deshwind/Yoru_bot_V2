@@ -33,3 +33,11 @@ voices/
 
 # camera spots are deployment data (dashboard writes them)
 maps/cameras.json
+
+# demo recordings (large video files)
+recordings/
+# simulation deployment data (separate from the real robot)
+maps/sim/
+maps/real_room_backup/
+# base/dock spots are deployment data too (dashboard writes them)
+maps/bases.json

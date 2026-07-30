@@ -26,7 +26,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
-DEFAULT_MAP = os.path.expanduser('~/Yoru_bot_V2/maps/main_map.yaml')
+DEFAULT_MAP = os.path.expanduser('~/Yoru_bot_V2/maps/sim/main_map.yaml')
 
 
 def generate_launch_description():
